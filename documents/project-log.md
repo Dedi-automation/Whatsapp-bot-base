@@ -8,3 +8,7 @@
 - Tests added: T-12 to T-17.
 - Tests run: none. Documents only.
 - Approval: pending from the project owner (Dedi). Code work starts only after approval.
+## 2026-10-23 - repo
+
+- Private repo created: Dedi-automation/Whatsapp-bot-base (main).
+- Commit 5b9594a: documents v0.3 and CLAUDE.md. No code.
