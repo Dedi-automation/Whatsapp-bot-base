@@ -7,6 +7,7 @@ Date: 2026-10-23 · Version 0.3 (updated for parallel build)
 The base is a template, not a running product. Every bot (travel, car, home, savings, collections, leads) is a new repo built on a locked version of the base, with its own config, agent prompt and knowledge sources.
 
 - Phase A builds the base only. The travel bot is Phase B and is not covered here.
+- Send window: Sunday to Thursday, 09:00 to 17:50 Israel time, inclusive. Nothing is sent after 17:50 on any day (decisions.md, item 17).
 - The base lives in a new private repo named whatsapp-bot-base. MyDoctor stays as a read-only reference.
 - All findings in section 5 are fixed in the new base, not in MyDoctor.
 - This spec is based on reading every file in MyDoctor at commit b91ca9d. Nothing was run or tested against live Google Sheets or WhatsApp. Anything not verified is marked TO VERIFY.
@@ -151,6 +152,8 @@ Step 3 - Base 1.0.0 tag. Only when all tests pass and the log is recorded.
 
 Step 4 - Travel bot. Created from base 1.0.0. Starts only after step 3.
 
+Send window for every step: Sunday to Thursday, 09:00 to 17:50 Israel time, inclusive. Nothing is sent after 17:50 on any day.
+
 Exit rule for each step: its tests pass and the result is written to project-log.md.
 
 ## 9. Test mode and feedback (base module)
@@ -186,7 +189,7 @@ PROPOSED: B10 (email) and B11 (admin dashboard) are postponed to a later phase.
 | B5 WhatsApp client | Send, templates, parse incoming messages | whatsapp.js | Handle non-text messages (F-20) |
 | B6 AI client | Prompt loading, missing-variable check (explicit error), model from config | claude.js | Fixes F-10 and F-29 |
 | B7 Conversation engine | Receive message, window check, save transcript, handoff to agent | webhook.js, leads.js | Rewrite (F-11, F-13, F-27) |
-| B8 Send window | Sunday to Thursday, 09:00 to 17:50, holidays | schedule-window.js | Keep |
+| B8 Send window | Sunday to Thursday, 09:00 to 17:50 inclusive, Israel time, holidays. Nothing is sent after 17:50 on any day | schedule-window.js | Keep |
 | B9 Scheduled jobs | Reminders and digest with locking and duplicate-run protection | New | Fixes F-06, F-15, F-16 |
 | B10 Notifications | Email to agent | email.js | Escape all fields (F-22). Postponed |
 | B11 Admin dashboard | View and edit agents | admin.js | Rewrite (F-01, F-04, F-21). Postponed |
