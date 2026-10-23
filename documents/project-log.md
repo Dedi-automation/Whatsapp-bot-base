@@ -37,3 +37,8 @@
 - Tests after the change: 64 tests. 7 pass, 55 fail (stubs), 2 todo. Unchanged.
 - Decisions recorded (decisions.md, items 17 to 20): model string `claude-haiku-5-5`, archive rules per bot, transcript one record per message, retention per bot. The model Open item is closed.
 - Not committed.
+## 2026-10-23 - step 0 merged
+
+- Merged step0/contracts into main (fast-forward) at 14c1ca4 and pushed to origin.
+- Tests: 64 total, 7 pass, 55 fail (stubs), 2 todo.
+- Next: step 1 branches A (data), C (AI), D (scheduling).
