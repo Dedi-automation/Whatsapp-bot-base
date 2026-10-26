@@ -1,0 +1,56 @@
+name: test
+
+# Runs the full suite with the Firestore emulator on every push and pull request,
+# so Firestore cases run instead of being skipped (decisions.md item 23).
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          # node --test expands the "test/**/*.test.js" glob only from Node 21 on;
+          # on Node 20 it finds no test file. Same major as the cloud session.
+          node-version: 22
+          cache: npm
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+      - run: npm ci
+      - name: Start Firestore emulator
+        run: |
+          npx -y firebase-tools@13.29.1 setup:emulators:firestore
+          java -jar ~/.cache/firebase/emulators/cloud-firestore-emulator-v1.19.8.jar --host=127.0.0.1 --port=8080 > emulator.log 2>&1 &
+          for i in $(seq 1 60); do
+            curl -sf http://127.0.0.1:8080 > /dev/null && exit 0
+            sleep 1
+          done
+          cat emulator.log
+          exit 1
+      - name: npm test
+        env:
+          FIRESTORE_EMULATOR_HOST: 127.0.0.1:8080
+        # The default run shell has no pipefail; without it a failing npm test is hidden by tee.
+        shell: bash
+        run: npm test 2>&1 | tee test-output.txt
+      - name: Fail if any Firestore case was skipped or no test ran
+        run: |
+          counts="$(grep -E '^# (tests|pass|fail|skipped|todo) ' test-output.txt || true)"
+          echo "$counts" >> "$GITHUB_STEP_SUMMARY"
+          echo "::notice title=Test counts::$(echo "$counts" | tr '\n' ' ')"
+          tail -5 test-output.txt
+          if grep -Eq '^# skipped [1-9]' test-output.txt; then
+            echo "Firestore cases were skipped; they must run with the emulator."
+            exit 1
+          fi
+          if ! grep -Eq '^# pass [1-9]' test-output.txt; then
+            echo "No test passed; the test run did not find the tests."
+            exit 1
+          fi
