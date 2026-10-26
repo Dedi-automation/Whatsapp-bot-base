@@ -53,3 +53,15 @@
 - Merged into main at 07734a8 (merge commit, approved by Dedi). `npm test` on main after merge: 74 tests, 23 pass, 49 fail (other branches' stubs), 2 todo. `test/ai.test.js`: 16/16 pass.
 - Rollback: revert merge commit 07734a8 (`git revert -m 1 07734a8`); it touches only `src/ai.js` and `test/ai.test.js`.
 - Next: branch D (scheduling) rebases on main and merges.
+## 2026-10-26 - step 1, branch D (Scheduling) - branch-d/scheduling, PR #3
+
+- Scope: B8 send window `src/schedule-window.js`, B9 jobs `src/jobs.js`, B13 archive `src/archive.js`, and their tests. Branch commits df3a482, e631ed3.
+- Findings closed: F-06 (job lock via storage.createIfAbsent; outbound campaign sending is a later module), F-15 (reminders read every record), F-16 (DD/MM/YYYY parsed explicitly, impossible dates are SchemaError), F-17 (archive part: start date and statuses from config).
+- Tests: T-04, T-08. Own files: 29 tests, 29 pass (13 step-0 + 16 added), also with TZ set to Asia/Jerusalem, UTC, America/New_York and Pacific/Kiritimati.
+- `npm test` on the branch before rebase: 80 tests, 36 pass, 42 fail, 2 todo. After rebase on main d242090: 90 / 52 / 36 / 2. All failures are other modules' step-0 stubs.
+- Branch dry run (memory fake, nothing sent): reminders reach both agents' leads; a second run the same day and two parallel runs send nothing twice; 17:51, Friday and a holiday send nothing; archive moves 1 then 0. Same output after the rebase. T-09 full DRY RUN deferred to step 2.
+- Decided by Dedi (2026-10-26): `archive.startDate` is the bot's go-live (production) date, set in config at launch; reminder date field is `callbackDate`; dates are always generated automatically, so a malformed date raises SchemaError naming the record.
+- Open: MyDoctor-style 3-stage "no reply" reminders (Dedi asked to follow the MyDoctor pattern; follow-up PR after Dedi confirms); archive age/status rule as in MyDoctor archive.js (72 quiet hours for finished leads, 30 days inactive).
+- Merged into main at 7bd5f41 (merge commit, by Dedi). `npm test` on main after merge: 90 tests, 52 pass, 36 fail (other branches' stubs), 2 todo.
+- Rollback: revert merge commit 7bd5f41 (`git revert -m 1 7bd5f41`); it touches only branch D's six files.
+- Next: branch A (data) rebases on main and merges.
