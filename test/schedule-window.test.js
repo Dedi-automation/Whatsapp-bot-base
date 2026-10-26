@@ -59,3 +59,32 @@ test('T-04: the check uses Israel time, not UTC (summer date, IDT is UTC+3)', ()
   assert.equal(isWithinSendWindow(new Date('2026-07-05T05:59:00Z')), false);
   assert.equal(isWithinSendWindow(new Date('2026-07-05T14:51:00Z')), false);
 });
+
+test('T-04: winter date (IST, UTC+2) uses the same Israel wall-clock window', () => {
+  // 2026-12-06 is a Sunday. 07:00Z is 09:00 in Israel; 15:50Z is 17:50 in Israel.
+  assert.equal(isWithinSendWindow(new Date('2026-12-06T07:00:00Z')), true);
+  assert.equal(isWithinSendWindow(new Date('2026-12-06T15:50:00Z')), true);
+  assert.equal(isWithinSendWindow(new Date('2026-12-06T06:59:00Z')), false);
+  assert.equal(isWithinSendWindow(new Date('2026-12-06T15:51:00Z')), false);
+});
+
+test('T-04: DST change days keep the Israel wall-clock window', () => {
+  // Israel summer time ends on Sunday 2026-10-25 at 02:00 and starts on Friday 2026-03-27.
+  assert.equal(isWithinSendWindow(israel('2026-10-25T09:00')), true);
+  assert.equal(isWithinSendWindow(new Date('2026-10-25T06:59:00Z')), false); // 08:59 IST
+  // 2026-03-29 is the first Sunday on summer time.
+  assert.equal(isWithinSendWindow(new Date('2026-03-29T06:00:00Z')), true); // 09:00 IDT
+  assert.equal(isWithinSendWindow(new Date('2026-03-29T05:59:00Z')), false);
+});
+
+test('T-04: the holiday is matched on the Israel date, not the UTC date', () => {
+  // 2026-10-25T23:30Z is Monday 2026-10-26 01:30 in Israel: outside hours anyway.
+  // 2026-10-26T07:00Z is Monday 09:00 in Israel.
+  assert.equal(isWithinSendWindow(new Date('2026-10-26T07:00:00Z'), { holidays: ['2026-10-26'] }), false);
+  assert.equal(isWithinSendWindow(new Date('2026-10-26T07:00:00Z'), { holidays: ['2026-10-25'] }), true);
+});
+
+test('T-04: a malformed holiday or an invalid date is an error, not a silent pass', () => {
+  assert.throws(() => isWithinSendWindow(israel('2026-10-25T10:00'), { holidays: ['25/10/2026'] }), TypeError);
+  assert.throws(() => isWithinSendWindow(new Date('not a date')), TypeError);
+});

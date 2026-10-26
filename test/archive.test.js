@@ -41,3 +41,34 @@ test('running twice moves nothing the second time', async () => {
   const second = await archiver.archiveOldRecords('leads', 'leads_archive');
   assert.equal(second.moved, 0);
 });
+
+test('F-17: start date and statuses come from config, not code', async () => {
+  const storage = createMemoryStorage({ projectId: 'test-a' });
+  await seed(storage);
+  const other = { archive: { startDate: '2026-12-31', eligibleStatuses: ['closed', 'open'] } };
+  const result = await createArchiver({ storage, now, config: other }).archiveOldRecords('leads', 'leads_archive');
+  assert.equal(result.moved, 3);
+});
+
+test('createdAt as an ISO timestamp is read by its date; missing createdAt stays in place', async () => {
+  const storage = createMemoryStorage({ projectId: 'test-a' });
+  await storage.set('leads', 'iso', { status: 'closed', createdAt: '2025-06-01T08:00:00.000Z' });
+  await storage.set('leads', 'no-date', { status: 'closed' });
+  const result = await createArchiver({ storage, now, config }).archiveOldRecords('leads', 'leads_archive');
+  assert.equal(result.moved, 1);
+  assert.notEqual(await storage.get('leads', 'no-date'), null);
+});
+
+test('the archived copy keeps the record data unchanged', async () => {
+  const storage = createMemoryStorage({ projectId: 'test-a' });
+  await seed(storage);
+  await createArchiver({ storage, now, config }).archiveOldRecords('leads', 'leads_archive');
+  assert.deepEqual(await storage.get('leads_archive', 'old-closed'), { status: 'closed', createdAt: '2025-06-01' });
+});
+
+test('missing or malformed archive config is an error at startup', () => {
+  const storage = createMemoryStorage({ projectId: 'test-a' });
+  assert.throws(() => createArchiver({ storage, now, config: {} }), TypeError);
+  assert.throws(() => createArchiver({ storage, now, config: { archive: { startDate: '01/01/2026', eligibleStatuses: ['closed'] } } }), TypeError);
+  assert.throws(() => createArchiver({ storage, now, config: { archive: { startDate: '2026-01-01', eligibleStatuses: [] } } }), TypeError);
+});
