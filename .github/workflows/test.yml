@@ -1,0 +1,44 @@
+name: test
+
+# Runs the full suite with the Firestore emulator on every push and pull request,
+# so Firestore cases run instead of being skipped (decisions.md item 23).
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+      - run: npm ci
+      - name: Start Firestore emulator
+        run: |
+          npx -y firebase-tools@13.29.1 setup:emulators:firestore
+          java -jar ~/.cache/firebase/emulators/cloud-firestore-emulator-v1.19.8.jar --host=127.0.0.1 --port=8080 > emulator.log 2>&1 &
+          for i in $(seq 1 60); do
+            curl -sf http://127.0.0.1:8080 > /dev/null && exit 0
+            sleep 1
+          done
+          cat emulator.log
+          exit 1
+      - name: npm test
+        env:
+          FIRESTORE_EMULATOR_HOST: 127.0.0.1:8080
+        run: npm test 2>&1 | tee test-output.txt
+      - name: Fail if any Firestore case was skipped
+        run: |
+          if grep -Eq '^# skipped [1-9]' test-output.txt; then
+            echo "Firestore cases were skipped; they must run with the emulator."
+            exit 1
+          fi
