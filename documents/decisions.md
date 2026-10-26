@@ -1,6 +1,6 @@
 # Decisions
 
-Last updated: 2026-10-26
+Last updated: 2026-10-26 (stage 2)
 
 ## Decided (approved by project owner)
 
@@ -46,10 +46,15 @@ Decided 2026-10-26 (Dedi's answers during step 1):
 37. Every branch runs its tests and a dry run before commit and merge, and records each test run (date, commit, result, rollback point).
 38. B10 (email to the agent) and B11 (admin dashboard, the agent's lead board) move to stage 2. They are rebuilt from the MyDoctor logic, not copied: email.js keeps its logic and escapes every field (F-22); the admin dashboard is rewritten (F-01, F-04, F-12, F-21). The agent dashboard that shows media and test-mode notes (items 32, 34) is part of B11.
 
+Decided 2026-10-26 (Dedi approved the stage 2 plan):
+
+39. No token in any URL (F-04). Scheduled jobs send the job token in the Authorization header. The agent's dashboard uses a login page; the admin token is posted once and the server sets a signed session cookie (HttpOnly, Secure, SameSite=Strict). Every change on the dashboard is a POST with a CSRF field.
+40. Email (B10) goes through the SendGrid HTTP API. SENDGRID_API_KEY, SENDGRID_FROM_EMAIL and NOTIFY_EMAIL are set all together or not at all. Emails link to the dashboard and never carry a token.
+41. Stage 2 is built and tested from the cloud session and GitHub Actions; the owner does not run commands locally. The real test environment check runs as a manual GitHub Actions workflow with repository secrets.
+
 ## Proposed, not yet approved
 
 - Source of truth for documents: git. Claude Docs pages are read-only views refreshed from git.
-- Admin and job tokens sent in headers, not in URLs.
 - Use the existing D&D Meta business account for WhatsApp testing.
 
 ## Open
