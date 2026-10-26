@@ -5,7 +5,8 @@
 // Moves old records from a collection to an archive collection (F-17).
 // The start date and the list of eligible statuses come from config, not code
 // (decisions.md, item 19: archive rules are set per bot; the base keeps
-// placeholder config only).
+// placeholder config only). config.archive.startDate is the bot's go-live
+// (production) date, set in config when the bot launches (Dedi, 2026-10-26).
 //
 // A record is moved when its status is in config.archive.eligibleStatuses and
 // its createdAt date (YYYY-MM-DD, or an ISO timestamp starting with it) is before
@@ -23,7 +24,7 @@ const DATE_ONLY = /^\d{4}-\d{2}-\d{2}$/;
  *   now: () => Date,
  *   config: {archive: {startDate: string, eligibleStatuses: string[]}}
  * }} deps
- *   config.archive.startDate: 'YYYY-MM-DD'. Records created on or after it are not archived.
+ *   config.archive.startDate: 'YYYY-MM-DD', the go-live date. Records created on or after it are not archived.
  * @returns {{archiveOldRecords: (collection: string, archiveCollection: string) => Promise<{moved: number}>}}
  */
 function createArchiver(deps) {
