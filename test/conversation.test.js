@@ -132,7 +132,12 @@ const idPhoto = (type = 'image', id = 'media-id-1') => ({
   kind: 'unsupported', messageId: `wamid.${type}.${id}`, from: '972500000000', mediaType: type, text: null,
   media: { id, mimeType: 'image/jpeg', caption: null },
 });
-const ACCEPT_ID_PHOTO = { acceptedMediaTypes: ['image', 'document'], mediaReceivedReplyText: 'Thanks, we received your file.' };
+const ACCEPT_ID_PHOTO = {
+  acceptedMediaTypes: ['image', 'document'],
+  mediaReceivedReplyText: 'Thanks, we received your file.',
+  mediaRejectedReplyText: 'אני מקבל קבצים רק בפורמט: {accepted}',
+  mediaTypeLabels: { image: 'תמונה', document: 'מסמך' },
+};
 
 test('a media type the bot accepts is saved and gets the bot acknowledgement', async () => {
   const { engine, whatsapp, storage, ai } = build({ media: ACCEPT_ID_PHOTO });
@@ -143,12 +148,18 @@ test('a media type the bot accepts is saved and gets the bot acknowledgement', a
   assert.equal(ai.calls.length, 0);
 });
 
-test('a media type the bot does not accept gets the fallback reply, and is still saved', async () => {
+test('a media type the bot does not accept gets a reply naming the accepted formats, and is still saved', async () => {
   const { engine, whatsapp, storage } = build({ media: ACCEPT_ID_PHOTO });
   const outcome = await engine.handleIncoming(idPhoto('video'));
-  assert.equal(outcome.status, 'unsupported_reply');
-  assert.equal(whatsapp.sent[0].text, 'Sorry, I can only read text messages.');
+  assert.equal(outcome.status, 'media_rejected');
+  assert.equal(whatsapp.sent[0].text, 'אני מקבל קבצים רק בפורמט: תמונה, מסמך');
   assert.equal((await storage.get('messages', `${outcome.conversationId}:1`)).media.id, 'media-id-1');
+});
+
+test('without labels the accepted formats are named by type', async () => {
+  const { engine, whatsapp } = build({ media: { ...ACCEPT_ID_PHOTO, mediaTypeLabels: undefined } });
+  await engine.handleIncoming(idPhoto('audio'));
+  assert.equal(whatsapp.sent[0].text, 'אני מקבל קבצים רק בפורמט: image, document');
 });
 
 test('by default no media type is accepted', async () => {
@@ -168,7 +179,8 @@ test('outside the send window an accepted file is saved and not acknowledged', a
   assert.equal(whatsapp.sent.length, 0);
 });
 
-test('media config is checked at startup: unknown type, or no acknowledgement text', () => {
-  assert.throws(() => build({ media: { acceptedMediaTypes: ['pdf'], mediaReceivedReplyText: 'x' } }), /unknown types: pdf/);
-  assert.throws(() => build({ media: { acceptedMediaTypes: ['image'] } }), /mediaReceivedReplyText is required/);
+test('media config is checked at startup: unknown type, missing texts, or no {accepted} placeholder', () => {
+  assert.throws(() => build({ media: { ...ACCEPT_ID_PHOTO, acceptedMediaTypes: ['pdf'] } }), /unknown types: pdf/);
+  assert.throws(() => build({ media: { ...ACCEPT_ID_PHOTO, mediaReceivedReplyText: undefined } }), /mediaReceivedReplyText is required/);
+  assert.throws(() => build({ media: { ...ACCEPT_ID_PHOTO, mediaRejectedReplyText: 'no placeholder' } }), /\{accepted\} is required/);
 });

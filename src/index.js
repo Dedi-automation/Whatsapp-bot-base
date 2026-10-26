@@ -26,6 +26,8 @@ const { createServer } = require('./server');
  *   unsupportedReplyText: string,
  *   acceptedMediaTypes?: string[],
  *   mediaReceivedReplyText?: string,
+ *   mediaRejectedReplyText?: string,
+ *   mediaTypeLabels?: Record<string, string>,
  *   holidays?: Iterable<string>,
  *   jobs?: Record<string, () => Promise<unknown>>,
  *   env?: Record<string, string | undefined>,
@@ -35,8 +37,10 @@ const { createServer } = require('./server');
  *   now?: () => Date,
  *   log?: {info: (...args: unknown[]) => void, error: (...args: unknown[]) => void}
  * }} options
- *   acceptedMediaTypes / mediaReceivedReplyText: which media this bot takes (for example
- *   ['image', 'document'] for an ID photo) and its acknowledgement. Default: none.
+ *   acceptedMediaTypes, mediaReceivedReplyText, mediaRejectedReplyText, mediaTypeLabels:
+ *   which media this bot takes (for example ['image', 'document'] for an ID photo), the
+ *   acknowledgement, and the reply for other media ("I accept files only as {accepted}").
+ *   Default: none accepted. See src/conversation.js.
  *   storage, whatsapp and ai are built from config unless passed in (tests, DRY RUN).
  * @returns {{config: import('./config').Config, server: import('node:http').Server, listen: () => Promise<number>}}
  *   listen resolves with the port in use.
@@ -61,6 +65,8 @@ function createBot(options) {
     unsupportedReplyText: options.unsupportedReplyText,
     acceptedMediaTypes: options.acceptedMediaTypes,
     mediaReceivedReplyText: options.mediaReceivedReplyText,
+    mediaRejectedReplyText: options.mediaRejectedReplyText,
+    mediaTypeLabels: options.mediaTypeLabels,
     systemPrompt: options.systemPrompt,
     tool: options.tool,
   });

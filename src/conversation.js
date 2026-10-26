@@ -7,7 +7,8 @@
 // - the inbound message is saved as a transcript record before any reply (T-11)
 // - non-text messages get a defined reply, not silence (T-17, F-20)
 // - media types the bot accepts (per bot, e.g. an ID photo) are saved and get the
-//   bot's acknowledgement; other types get unsupportedReplyText (owner decision 2026-10-26)
+//   bot's acknowledgement; other media gets mediaRejectedReplyText, which names the
+//   accepted types, so the customer knows what to send (owner decision 2026-10-26)
 // - the reply is produced by the AI client and must pass its schema check (T-06)
 // - outside the send window the message is saved and no reply is sent (B8)
 // - handoff: the reply to the customer is sent first, then agent_action_required is set
@@ -29,7 +30,7 @@ const CONVERSATIONS = 'conversations';
 
 /**
  * @typedef {Object} Outcome
- * @property {'replied' | 'handoff' | 'duplicate' | 'outside_window' | 'unsupported_reply' | 'media_received'} status
+ * @property {'replied' | 'handoff' | 'duplicate' | 'outside_window' | 'unsupported_reply' | 'media_received' | 'media_rejected'} status
  * @property {string} conversationId
  */
 
@@ -44,17 +45,21 @@ const CONVERSATIONS = 'conversations';
  *   unsupportedReplyText: string,
  *   acceptedMediaTypes?: string[],
  *   mediaReceivedReplyText?: string,
+ *   mediaRejectedReplyText?: string,
+ *   mediaTypeLabels?: Record<string, string>,
  *   systemPrompt: string,
  *   tool: import('./ai').ToolDefinition
  * }} deps
  *   acceptedMediaTypes: media types this bot accepts, from 'image', 'audio', 'video',
- *   'document', 'sticker'. Default none. mediaReceivedReplyText is required when the
- *   list is not empty.
+ *   'document', 'sticker'. Default none. When the list is not empty, both texts are required:
+ *   mediaReceivedReplyText for an accepted file, and mediaRejectedReplyText for any other
+ *   media. mediaRejectedReplyText must contain {accepted}, which is filled with the
+ *   accepted types, named by mediaTypeLabels (for example {image: 'תמונה'}) or by type.
  * @returns {{handleIncoming: (message: import('./whatsapp').IncomingMessage) => Promise<Outcome>}}
  */
 function createConversationEngine(deps) {
   const { storage, whatsapp, ai, deduplicator, isWithinSendWindow, now, unsupportedReplyText, systemPrompt, tool } = deps;
-  const { acceptedMediaTypes = [], mediaReceivedReplyText } = deps;
+  const { acceptedMediaTypes = [], mediaReceivedReplyText, mediaRejectedReplyText, mediaTypeLabels = {} } = deps;
   if (typeof unsupportedReplyText !== 'string' || unsupportedReplyText.trim() === '') {
     throw new TypeError('unsupportedReplyText is required (T-17)');
   }
@@ -63,7 +68,13 @@ function createConversationEngine(deps) {
   if (acceptedMediaTypes.length > 0 && (typeof mediaReceivedReplyText !== 'string' || mediaReceivedReplyText.trim() === '')) {
     throw new TypeError('mediaReceivedReplyText is required when acceptedMediaTypes is set');
   }
+  if (acceptedMediaTypes.length > 0 && (typeof mediaRejectedReplyText !== 'string' || !mediaRejectedReplyText.includes('{accepted}'))) {
+    throw new TypeError('mediaRejectedReplyText with {accepted} is required when acceptedMediaTypes is set');
+  }
   const accepted = new Set(acceptedMediaTypes);
+  const rejectedText = accepted.size > 0
+    ? mediaRejectedReplyText.split('{accepted}').join(acceptedMediaTypes.map((type) => mediaTypeLabels[type] || type).join(', '))
+    : null;
 
   /** Append one transcript record. createIfAbsent makes the sequence safe under concurrent writes. */
   async function appendMessage(conversationId, record) {
@@ -131,6 +142,11 @@ function createConversationEngine(deps) {
       if (message.kind !== 'text' && message.media && accepted.has(message.mediaType)) {
         await send(conversationId, message.from, mediaReceivedReplyText);
         return { status: 'media_received', conversationId };
+      }
+
+      if (message.kind !== 'text' && message.media && rejectedText) {
+        await send(conversationId, message.from, rejectedText);
+        return { status: 'media_rejected', conversationId };
       }
 
       if (message.kind !== 'text') {

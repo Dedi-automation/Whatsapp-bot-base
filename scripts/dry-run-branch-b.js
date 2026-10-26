@@ -33,6 +33,8 @@ const engine = createConversationEngine({
   // Example bot that needs an ID photo: images and documents are accepted.
   acceptedMediaTypes: ['image', 'document'],
   mediaReceivedReplyText: 'תודה, קיבלנו את הקובץ',
+  mediaRejectedReplyText: 'אני מקבל קבצים רק בפורמט: {accepted}',
+  mediaTypeLabels: { image: 'תמונה', document: 'מסמך' },
   systemPrompt: 'dry-run system prompt',
   tool: { name: 'send_whatsapp_reply', inputSchema: { type: 'object', required: ['text'], properties: { text: { type: 'string' }, handoff: { type: 'boolean' } } } },
 });
