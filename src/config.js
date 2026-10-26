@@ -1,13 +1,15 @@
 'use strict';
 
-// B1 Config. Contract only (step 0). Logic comes in Branch B.
+// B1 Config (Branch B).
 //
 // Required variables: missing any of them is a startup error (ConfigError),
 // never a silent start (F-14, T-01, T-13).
 // Variable names follow spec.md Appendix A. FIRESTORE_PROJECT_ID is a proposal
 // (decisions.md, Open). AI_MODEL is a proposal; its value is TO VERIFY.
 
-const { NotImplementedError } = require('./errors');
+const { ConfigError } = require('./errors');
+
+const DEFAULT_PORT = 8080;
 
 /** @type {readonly string[]} */
 const REQUIRED_ENV = Object.freeze([
@@ -35,8 +37,10 @@ const REQUIRED_ENV = Object.freeze([
  * @property {string} adminToken
  * @property {string} scheduledJobToken
  * @property {string} appBaseUrl
- * @property {number} port                 PORT, optional
- * @property {{phone: string|undefined}} healthCheck  HEALTH_CHECK_PHONE, optional (F-17)
+ * @property {number} port                 PORT, optional (default 8080). Invalid value: ConfigError
+ * @property {{phone: string|undefined, alertPhone: string|undefined}} healthCheck
+ *   HEALTH_CHECK_PHONE: recipient of the health check message, optional (F-17).
+ *   HEALTH_CHECK_ALERT_PHONE: gets a copy of every failed check (owner decision 2026-10-26), optional.
  */
 
 /**
@@ -50,8 +54,40 @@ const REQUIRED_ENV = Object.freeze([
  * @returns {Config}
  */
 function loadConfig(env = process.env) {
-  void env;
-  throw new NotImplementedError('loadConfig');
+  // An empty or whitespace-only value counts as missing. Values are never trimmed
+  // or printed: they may be secrets.
+  const isSet = (name) => typeof env[name] === 'string' && env[name].trim() !== '';
+  const optional = (name) => (isSet(name) ? env[name] : undefined);
+  const missing = REQUIRED_ENV.filter((name) => !isSet(name));
+  if (missing.length > 0) throw new ConfigError(missing);
+
+  let port = DEFAULT_PORT;
+  if (isSet('PORT')) {
+    port = Number(env.PORT);
+    if (!Number.isInteger(port) || port < 1 || port > 65535) {
+      const err = new ConfigError(['PORT']);
+      err.message = 'Invalid environment variable: PORT must be an integer from 1 to 65535';
+      throw err;
+    }
+  }
+
+  return Object.freeze({
+    anthropicApiKey: env.ANTHROPIC_API_KEY,
+    aiModel: env.AI_MODEL,
+    whatsappToken: env.WHATSAPP_TOKEN,
+    whatsappPhoneNumberId: env.WHATSAPP_PHONE_NUMBER_ID,
+    whatsappAppSecret: env.WHATSAPP_APP_SECRET,
+    whatsappVerifyToken: env.WHATSAPP_VERIFY_TOKEN,
+    firestoreProjectId: env.FIRESTORE_PROJECT_ID,
+    adminToken: env.ADMIN_TOKEN,
+    scheduledJobToken: env.SCHEDULED_JOB_TOKEN,
+    appBaseUrl: env.APP_BASE_URL,
+    port,
+    healthCheck: Object.freeze({
+      phone: optional('HEALTH_CHECK_PHONE'),
+      alertPhone: optional('HEALTH_CHECK_ALERT_PHONE'),
+    }),
+  });
 }
 
 module.exports = { loadConfig, REQUIRED_ENV };

@@ -1,13 +1,13 @@
 # Decisions
 
-Last updated: 2026-10-23
+Last updated: 2026-10-26
 
 ## Decided (approved by project owner)
 
 1. Start: new project. MyDoctor stays read-only reference.
 2. Fixes: only in the new base, not in MyDoctor.
 3. Base repo: whatsapp-bot-base, private.
-4. Storage: Firestore, one collection per bot.
+4. Storage: Firestore, one Firestore project per bot (changed 2026-10-26, see item 21).
 5. Contracts include B2 (security) and B4 (schema). B4 comes before B3.
 6. Secrets: new keys and tokens in the new project. README is not copied.
 7. AI model for first build: Haiku 5.5 (sufficient for now).
@@ -25,6 +25,26 @@ Last updated: 2026-10-23
 19. Archive rules are set per bot. The base keeps placeholder config only.
 20. Transcript is stored as one record per message. Retention is set per bot.
 
+Decided 2026-10-26 (Dedi's answers during step 1):
+
+21. One Firestore project per bot, not one collection per bot. One agent may run several bots, and similar bots run for different agents (T-05).
+22. Firestore environment variables: `FIRESTORE_PROJECT_ID`, `FIRESTORE_EMULATOR_HOST`, `GOOGLE_APPLICATION_CREDENTIALS`.
+23. Firestore tests need the emulator. Without it they are reported as "not run", never as passed. They must run with the emulator before a merge.
+24. The HTTP server and the WhatsApp webhook route are built in step 1 (branch B), with the routes from spec Appendix B.
+25. Duplicate messages: the bot checks the message ID before it saves the message, and ignores a message it already received, so the customer never gets two replies.
+26. Handoff to the agent: the bot thanks the customer first, then the handoff is recorded for the agent.
+27. A prompt value that contains only spaces counts as missing (explicit error).
+28. Default `max_tokens` for an AI reply is 1024.
+29. Archive start date is the bot's go-live (production) date, set in config at launch. Records start new at go-live.
+30. Reminders follow the MyDoctor reminder pattern. The reminder date field is `callbackDate`.
+31. Dates are always generated automatically in the correct format. A malformed date is an error that names the record.
+32. All media a customer sends is stored in the bot's database and shown on the agent's dashboard. Test-mode screenshots are stored the same way.
+33. Each bot sets which media types it accepts (for example an ID photo: image or document). An accepted file is saved and acknowledged. For any other format the bot replies with the formats it accepts ("I accept files only as ..."), filled in from the bot's config. Specific bot behavior is defined in stage 2.
+34. Test-mode feedback questions are fixed text per bot, from config. Feedback and conversations produce recommendations to improve the prompt, as in MyDoctor; the owner approves each change manually, nothing is applied automatically. This keeps improvement-review.js (F-23) in the base, inside test mode, with one trial per AI call.
+35. The health check sends a real WhatsApp message on every run. The recipient is set in config: the owner's test number now, the clerk's or client's number in production. A copy of every failed check goes to the owner (`HEALTH_CHECK_ALERT_PHONE`).
+36. Health check messages and failure alerts to the owner are sent at any day and hour, outside the send window. At go-live, who receives alerts and when is set per client.
+37. Every branch runs its tests and a dry run before commit and merge, and records each test run (date, commit, result, rollback point).
+
 ## Proposed, not yet approved
 
 - Source of truth for documents: git. Claude Docs pages are read-only views refreshed from git.
@@ -35,6 +55,4 @@ Last updated: 2026-10-23
 ## Open
 
 - Revocation of the old service key: confirm it is disabled in Google Cloud.
-- Firestore variable names (for example FIRESTORE_PROJECT_ID). Set in step 0.
-- Where test screenshots are stored and who can see the notes.
-- Whether improvement-review.js (F-23) is kept in the base at all.
+- Who besides the agent can see test-mode notes (storage is decided, item 32).
