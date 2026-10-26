@@ -1,0 +1,35 @@
+name: smoke-real
+
+# Real test environment check (decisions.md item 14): test Firestore project, test
+# WhatsApp number, SendGrid. Manual only. Uses repository secrets; a part whose
+# secrets are missing is reported "not run". Sends at most one WhatsApp template
+# message to the test recipient, and only inside the send window.
+on:
+  workflow_dispatch:
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Real test environment check
+        shell: bash
+        env:
+          FIRESTORE_PROJECT_ID: ${{ secrets.TEST_FIRESTORE_PROJECT_ID }}
+          GOOGLE_APPLICATION_CREDENTIALS_JSON: ${{ secrets.TEST_FIRESTORE_SERVICE_ACCOUNT_JSON }}
+          WHATSAPP_TOKEN: ${{ secrets.TEST_WHATSAPP_TOKEN }}
+          WHATSAPP_PHONE_NUMBER_ID: ${{ secrets.TEST_WHATSAPP_PHONE_NUMBER_ID }}
+          SMOKE_TEST_TO: ${{ secrets.TEST_WHATSAPP_RECIPIENT }}
+          SENDGRID_API_KEY: ${{ secrets.TEST_SENDGRID_API_KEY }}
+          SENDGRID_FROM_EMAIL: ${{ secrets.TEST_SENDGRID_FROM_EMAIL }}
+          NOTIFY_EMAIL: ${{ secrets.TEST_NOTIFY_EMAIL }}
+        run: |
+          node scripts/smoke-real.js | tee smoke.txt
+          echo "::notice title=Smoke result::$(tail -1 smoke.txt)"
+          cat smoke.txt >> "$GITHUB_STEP_SUMMARY"

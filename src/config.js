@@ -11,6 +11,9 @@ const { ConfigError } = require('./errors');
 
 const DEFAULT_PORT = 8080;
 
+/** Email (B10) is optional; when any of these is set, all of them are required. */
+const EMAIL_ENV = Object.freeze(['SENDGRID_API_KEY', 'SENDGRID_FROM_EMAIL', 'NOTIFY_EMAIL']);
+
 /** @type {readonly string[]} */
 const REQUIRED_ENV = Object.freeze([
   'ANTHROPIC_API_KEY',
@@ -41,6 +44,9 @@ const REQUIRED_ENV = Object.freeze([
  * @property {{phone: string|undefined, alertPhone: string|undefined}} healthCheck
  *   HEALTH_CHECK_PHONE: recipient of the health check message, optional (F-17).
  *   HEALTH_CHECK_ALERT_PHONE: gets a copy of every failed check (owner decision 2026-10-26), optional.
+ * @property {{apiKey: string, from: string, notifyTo: string} | null} email
+ *   B10. SENDGRID_API_KEY, SENDGRID_FROM_EMAIL, NOTIFY_EMAIL: all three or none.
+ *   null when none is set (the bot sends no email). Some but not all: ConfigError.
  */
 
 /**
@@ -71,6 +77,18 @@ function loadConfig(env = process.env) {
     }
   }
 
+  const emailSet = EMAIL_ENV.filter(isSet);
+  if (emailSet.length > 0 && emailSet.length < EMAIL_ENV.length) {
+    const missingEmail = EMAIL_ENV.filter((name) => !isSet(name));
+    const err = new ConfigError(missingEmail);
+    err.message = `Email needs all of ${EMAIL_ENV.join(', ')}; missing: ${missingEmail.join(', ')}`;
+    throw err;
+  }
+  const email =
+    emailSet.length === EMAIL_ENV.length
+      ? Object.freeze({ apiKey: env.SENDGRID_API_KEY, from: env.SENDGRID_FROM_EMAIL, notifyTo: env.NOTIFY_EMAIL })
+      : null;
+
   return Object.freeze({
     anthropicApiKey: env.ANTHROPIC_API_KEY,
     aiModel: env.AI_MODEL,
@@ -87,7 +105,8 @@ function loadConfig(env = process.env) {
       phone: optional('HEALTH_CHECK_PHONE'),
       alertPhone: optional('HEALTH_CHECK_ALERT_PHONE'),
     }),
+    email,
   });
 }
 
-module.exports = { loadConfig, REQUIRED_ENV };
+module.exports = { loadConfig, REQUIRED_ENV, EMAIL_ENV };

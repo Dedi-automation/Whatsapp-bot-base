@@ -1,6 +1,6 @@
 'use strict';
 
-// B7 Conversation engine. Covers T-03, T-10 (todo), T-11, T-17, and the send-window rule (B8).
+// B7 Conversation engine. Covers T-03, T-09 (full DRY RUN), T-10, T-11, T-17, and the send-window rule (B8).
 // Uses the fakes for B3, B5 and B6, and the real deduplicator from B2 (security.js).
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
@@ -78,8 +78,118 @@ test('handoff to the agent sets agent_action_required on the conversation', asyn
   assert.equal(conv.agent_action_required, true);
 });
 
-test('T-09: DRY RUN end to end (todo: needs Branch E test mode and all modules)', { todo: 'Step 2 integration' }, () => {});
-test('T-10: test mode ends with 4 to 6 questions to the agent (todo: section 9, Branch E)', { todo: 'Branch E' }, () => {});
+test('T-09: DRY RUN end to end, nothing real sent (scripts/dry-run.js; Firestore case in test/integration.test.js)', async () => {
+  const { runDryRun } = require('../scripts/dry-run');
+  const report = await runDryRun({ storage: createMemoryStorage({ projectId: 'dry-run-t09' }) });
+  assert.deepEqual(report.checks.filter(([, pass]) => !pass), []);
+  assert.ok(report.ok);
+});
+
+test('T-10: test mode ends with 4 to 6 questions to the agent, answers routed by the engine', async () => {
+  const { createTestMode } = require('../src/test-mode');
+  const storage = createMemoryStorage({ projectId: 'test-t10' });
+  const whatsapp = createFakeWhatsAppClient();
+  const questions = ['q1', 'q2', 'q3', 'q4'];
+  const module_ = createTestMode({ storage, whatsapp, isWithinSendWindow: () => true, now: () => new Date('2026-10-26T10:00:00Z'), questions, closingText: 'bye' });
+  const closed = [];
+  const ai = createFakeAiClient([{ text: 'trial reply' }]);
+  const engine = createConversationEngine({
+    storage, whatsapp, ai,
+    deduplicator: createDeduplicator({ storage }),
+    isWithinSendWindow: () => true,
+    now: () => new Date('2026-10-26T10:00:00Z'),
+    unsupportedReplyText: 'text only',
+    systemPrompt: 'system',
+    tool: TOOL,
+    testMode: { phones: ['972500000099'], endKeyword: 'סיום בדיקה', module: module_, onTrialClosed: async (id) => closed.push(id) },
+  });
+  const from = '972500000099';
+  let n = 0;
+  const say = (text) => engine.handleIncoming({ kind: 'text', messageId: `w${(n += 1)}`, from, text });
+
+  assert.equal((await say('hello bot')).status, 'replied', 'the trial conversation goes to the AI');
+  assert.equal((await say(' סיום בדיקה ')).status, 'test_trial_ended');
+  for (const answer of ['a1', 'a2', 'a3', 'a4']) assert.equal((await say(answer)).status, 'test_feedback');
+
+  const texts = whatsapp.sent.map((m) => m.text);
+  assert.deepEqual(texts, ['trial reply', 'q1', 'q2', 'q3', 'q4', 'bye']);
+  assert.equal(ai.calls.length, 1, 'answers never reach the AI');
+  assert.equal(closed.length, 1);
+  assert.deepEqual((await module_.listImprovements(closed[0])).map((r) => r.data.answer), ['a1', 'a2', 'a3', 'a4']);
+  const conv = await storage.get('conversations', from);
+  assert.equal(conv.activeTrialId, null);
+  assert.equal(conv.lastTrialId, closed[0]);
+});
+
+test('test mode: the end keyword from a customer (not a tester) goes to the AI as usual', async () => {
+  const { createTestMode } = require('../src/test-mode');
+  const storage = createMemoryStorage({ projectId: 'test-t10b' });
+  const whatsapp = createFakeWhatsAppClient();
+  const module_ = createTestMode({ storage, whatsapp, isWithinSendWindow: () => true, now: () => new Date(), questions: ['1', '2', '3', '4'], closingText: 'bye' });
+  const engine = createConversationEngine({
+    storage, whatsapp, ai: createFakeAiClient([{ text: 'ok' }]),
+    deduplicator: createDeduplicator({ storage }), isWithinSendWindow: () => true, now: () => new Date(),
+    unsupportedReplyText: 'x', systemPrompt: 's', tool: TOOL,
+    testMode: { phones: ['972500000099'], endKeyword: 'סיום בדיקה', module: module_ },
+  });
+  const outcome = await engine.handleIncoming({ kind: 'text', messageId: 'c1', from: '972500000001', text: 'סיום בדיקה' });
+  assert.equal(outcome.status, 'replied');
+});
+
+test('decisions.md item 32: an accepted file is downloaded and stored next to its transcript record', async () => {
+  const { storage, whatsapp, engine } = build({
+    media: { acceptedMediaTypes: ['image'], mediaReceivedReplyText: 'got it', mediaRejectedReplyText: 'only {accepted}' },
+  });
+  whatsapp.downloadMedia = async ({ mediaId }) => ({ data: Buffer.from(`file-${mediaId}`), mimeType: 'image/jpeg' });
+  const outcome = await engine.handleIncoming({ kind: 'unsupported', messageId: 'm1', from: '972500000000', mediaType: 'image', text: null, media: { id: 'mid-1', mimeType: 'image/jpeg', caption: null } });
+  assert.equal(outcome.status, 'media_received');
+  const file = await storage.get('media', '972500000000:1');
+  assert.equal(file.stored, true);
+  assert.equal(Buffer.from(file.data, 'base64').toString(), 'file-mid-1');
+  assert.equal(file.mimeType, 'image/jpeg');
+});
+
+test('a failed or too large download keeps the reason; the customer still gets the reply', async () => {
+  const { MAX_MEDIA_BYTES } = require('../src/conversation');
+  const { storage, whatsapp, engine } = build({
+    media: { acceptedMediaTypes: ['image'], mediaReceivedReplyText: 'got it', mediaRejectedReplyText: 'only {accepted}' },
+  });
+  let big = false;
+  whatsapp.downloadMedia = async () => {
+    if (big) return { data: Buffer.alloc(MAX_MEDIA_BYTES + 1), mimeType: 'image/png' };
+    throw new Error('network down');
+  };
+  const img = (id) => ({ kind: 'unsupported', messageId: id, from: '972500000000', mediaType: 'image', text: null, media: { id, mimeType: 'image/png', caption: null } });
+  assert.equal((await engine.handleIncoming(img('a'))).status, 'media_received');
+  assert.match((await storage.get('media', '972500000000:1')).detail, /network down/);
+  big = true;
+  await engine.handleIncoming(img('b'));
+  const second = (await storage.list('media')).find((r) => r.data.mediaId === 'b');
+  assert.equal(second.data.stored, false);
+  assert.match(second.data.detail, /over the/);
+  assert.equal(whatsapp.sent.filter((m) => m.text === 'got it').length, 2);
+});
+
+test('handoff: the onHandoff hook runs after the handoff is recorded; its failure is logged, not thrown', async () => {
+  const calls = [];
+  const errors = [];
+  const storage = createMemoryStorage({ projectId: 'test-h' });
+  const make = (hook) => createConversationEngine({
+    storage, whatsapp: createFakeWhatsAppClient(), ai: createFakeAiClient([{ text: 'thanks', handoff: true, handoff_reason: 'price' }]),
+    deduplicator: createDeduplicator({ storage }), isWithinSendWindow: () => true, now: () => new Date(),
+    unsupportedReplyText: 'x', systemPrompt: 's', tool: TOOL, onHandoff: hook,
+    log: { info() {}, error: (m) => errors.push(m) },
+  });
+  const ok = await make(async (input) => {
+    calls.push({ ...input, recorded: (await storage.get('conversations', input.conversationId)).agent_action_required });
+  }).handleIncoming(textMsg('h1'));
+  assert.equal(ok.status, 'handoff');
+  assert.deepEqual(calls, [{ conversationId: '972500000000', reason: 'price', recorded: true }]);
+
+  const failing = await make(async () => { throw new Error('smtp down'); }).handleIncoming(textMsg('h2'));
+  assert.equal(failing.status, 'handoff');
+  assert.equal(errors.length, 1);
+});
 
 test('the AI gets the full transcript, and the reply is saved as the next record', async () => {
   const { engine, ai, storage } = build({ aiReplies: [{ text: 'one' }, { text: 'two' }] });

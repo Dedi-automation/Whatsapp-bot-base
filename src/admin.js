@@ -259,7 +259,7 @@ function createAdmin(deps) {
     const lead = await storage.get(leadsTab, id);
     if (!lead) return notFound(res);
     const transcript = await listByPrefix(MESSAGES, `${id}:`);
-    const mediaIds = new Set((await listByPrefix(MEDIA, `${id}:`)).map((r) => r.id));
+    const mediaIds = await storedMediaIds(`${id}:`);
 
     const fields = leadFields.map(([fid, label]) => html`<tr><th>${label}</th><td>${display(lead[fid])}</td></tr>`);
     const messages = transcript.map((r) => {
@@ -316,7 +316,7 @@ function createAdmin(deps) {
     const session = await storage.get(SESSIONS, trialId);
     if (!session) return notFound(res);
     const notes = await listByPrefix(IMPROVEMENTS, `${trialId}:`);
-    const mediaIds = new Set((await listByPrefix(MEDIA, `${trialId}:`)).map((r) => r.id));
+    const mediaIds = await storedMediaIds(`${trialId}:`);
     const recs = await listByPrefix(RECOMMENDATIONS, `${trialId}:`);
 
     const noteItems = notes.map((n) => {
@@ -405,6 +405,11 @@ function createAdmin(deps) {
   }
 
   // ---- helpers ----
+
+  /** IDs of media records under a prefix that hold a file (a failed download keeps only the reason). */
+  async function storedMediaIds(prefix) {
+    return new Set((await listByPrefix(MEDIA, prefix)).filter((r) => typeof r.data.data === 'string').map((r) => r.id));
+  }
 
   async function listByPrefix(collection, prefix) {
     return (await storage.list(collection))

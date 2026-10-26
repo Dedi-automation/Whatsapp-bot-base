@@ -57,3 +57,23 @@ test('HEALTH_CHECK_ALERT_PHONE is optional and loads as healthCheck.alertPhone',
   const config = loadConfig({ ...fullEnv(), HEALTH_CHECK_PHONE: '972500000001', HEALTH_CHECK_ALERT_PHONE: '972500000002' });
   assert.deepEqual({ ...config.healthCheck }, { phone: '972500000001', alertPhone: '972500000002' });
 });
+
+const { EMAIL_ENV } = require('../src/config');
+
+test('B10: email is off (null) when no email variable is set', () => {
+  assert.equal(loadConfig(fullEnv()).email, null);
+});
+
+test('B10: all three email variables give an email config', () => {
+  const env = { ...fullEnv(), SENDGRID_API_KEY: 'k', SENDGRID_FROM_EMAIL: 'bot@example.com', NOTIFY_EMAIL: 'agent@example.com' };
+  assert.deepEqual({ ...loadConfig(env).email }, { apiKey: 'k', from: 'bot@example.com', notifyTo: 'agent@example.com' });
+});
+
+test('B10: some but not all email variables is a startup error naming the missing ones', () => {
+  const env = { ...fullEnv(), SENDGRID_API_KEY: 'secret-key' };
+  assert.throws(
+    () => loadConfig(env),
+    (err) => err instanceof ConfigError && err.missing.join() === 'SENDGRID_FROM_EMAIL,NOTIFY_EMAIL' && !err.message.includes('secret-key')
+  );
+  assert.equal(EMAIL_ENV.length, 3);
+});
