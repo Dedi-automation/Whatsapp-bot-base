@@ -41,7 +41,8 @@ async function firestorePart() {
   fs.writeFileSync(keyFile, env.GOOGLE_APPLICATION_CREDENTIALS_JSON, { mode: 0o600 });
   process.env.GOOGLE_APPLICATION_CREDENTIALS = keyFile;
   try {
-    const storage = createStorage({ projectId: env.FIRESTORE_PROJECT_ID });
+    // A value pasted into the GitHub secret form can carry a trailing line break.
+    const storage = createStorage({ projectId: env.FIRESTORE_PROJECT_ID.trim() });
     const id = `smoke-${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
     await storage.set('smoke_checks', id, { at: new Date().toISOString(), source: 'smoke-real' });
     const back = await storage.get('smoke_checks', id);
