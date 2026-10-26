@@ -36,9 +36,14 @@ jobs:
         env:
           FIRESTORE_EMULATOR_HOST: 127.0.0.1:8080
         run: npm test 2>&1 | tee test-output.txt
-      - name: Fail if any Firestore case was skipped
+      - name: Fail if any Firestore case was skipped or no test ran
         run: |
+          grep -E '^# (tests|pass|fail|skipped|todo) ' test-output.txt | tee -a "$GITHUB_STEP_SUMMARY"
           if grep -Eq '^# skipped [1-9]' test-output.txt; then
             echo "Firestore cases were skipped; they must run with the emulator."
+            exit 1
+          fi
+          if ! grep -Eq '^# pass [1-9]' test-output.txt; then
+            echo "No test passed; the test run did not find the tests."
             exit 1
           fi
