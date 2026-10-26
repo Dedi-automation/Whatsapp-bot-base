@@ -24,7 +24,7 @@ const storage = createMemoryStorage({ projectId: config.firestoreProjectId });
 let within = true;
 const engine = createConversationEngine({
   storage, whatsapp,
-  ai: createFakeAiClient([{ text: 'שלום, איך אפשר לעזור?' }, { text: 'מעביר לסוכן', handoff: true, handoff_reason: 'price question' }]),
+  ai: createFakeAiClient([{ text: 'שלום, איך אפשר לעזור?' }, { text: 'תודה, נציג יחזור אליך בהקדם', handoff: true, handoff_reason: 'price question' }]),
   deduplicator: createDeduplicator({ storage }),
   isWithinSendWindow: () => within,
   now: () => new Date('2026-10-26T09:00:00Z'),

@@ -96,3 +96,25 @@ test('T-17: outside the send window a voice note gets no reply either', async ()
   assert.equal(outcome.status, 'outside_window');
   assert.equal(whatsapp.sent.length, 0);
 });
+
+test('handoff: the customer gets the reply first, then the handoff is recorded', async () => {
+  const { engine, storage, whatsapp } = build({ aiReplies: [{ text: 'תודה, נציג יחזור אליך', handoff: true }] });
+  let flaggedAtSend;
+  const realSend = whatsapp.sendText;
+  whatsapp.sendText = async (input) => {
+    const conv = await storage.get('conversations', input.to);
+    flaggedAtSend = Boolean(conv && conv.agent_action_required);
+    return realSend(input);
+  };
+  const outcome = await engine.handleIncoming(textMsg('wamid.order'));
+  assert.equal(flaggedAtSend, false);
+  assert.equal((await storage.get('conversations', outcome.conversationId)).agent_action_required, true);
+});
+
+test('handoff is still recorded when the reply cannot be sent', async () => {
+  const { WhatsAppError } = require('../src/errors');
+  const { engine, storage, whatsapp } = build({ aiReplies: [{ text: 'תודה', handoff: true }] });
+  whatsapp.failNextWith(new WhatsAppError('down', { status: 500 }));
+  await assert.rejects(() => engine.handleIncoming(textMsg('wamid.fail')), WhatsAppError);
+  assert.equal((await storage.get('conversations', '972500000000')).agent_action_required, true);
+});

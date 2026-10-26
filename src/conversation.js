@@ -8,7 +8,8 @@
 // - non-text messages get a defined reply, not silence (T-17, F-20)
 // - the reply is produced by the AI client and must pass its schema check (T-06)
 // - outside the send window the message is saved and no reply is sent (B8)
-// - handoff to the agent sets agent_action_required on the conversation (B10 is postponed)
+// - handoff: the reply to the customer is sent first, then agent_action_required is set
+//   on the conversation (B10 is postponed)
 //
 // Transcript: one record per message in collection 'messages', ID `${conversationId}:${seq}`.
 // Per-message records avoid the single-cell size problem (F-27).
@@ -118,13 +119,19 @@ function createConversationEngine(deps) {
       checkToolInput(reply, tool);
 
       if (reply.handoff === true) {
-        await updateConversation(conversationId, (current) => ({
-          ...current,
-          agent_action_required: true,
-          handoff_reason: typeof reply.handoff_reason === 'string' ? reply.handoff_reason : null,
-          handoffAt: now().toISOString(),
-        }));
-        await send(conversationId, message.from, reply.text, { handoff: true });
+        // The customer gets the reply (thanks) first, then the handoff to the agent
+        // is recorded (owner decision, 2026-10-26). The handoff is recorded even if
+        // the send fails, so the agent still sees the request.
+        try {
+          await send(conversationId, message.from, reply.text, { handoff: true });
+        } finally {
+          await updateConversation(conversationId, (current) => ({
+            ...current,
+            agent_action_required: true,
+            handoff_reason: typeof reply.handoff_reason === 'string' ? reply.handoff_reason : null,
+            handoffAt: now().toISOString(),
+          }));
+        }
         return { status: 'handoff', conversationId };
       }
 
