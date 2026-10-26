@@ -54,3 +54,35 @@ test('text message parses to kind "text"; status-only payloads produce no entrie
   ]);
   assert.deepEqual(client.parseIncoming({ entry: [{ changes: [{ value: { statuses: [{ id: 'x' }] } }] }] }), []);
 });
+
+test('sendTemplate sends name, language and body parameters', async () => {
+  const { fn, calls } = stubFetch(200, { messages: [{ id: 'wamid.tpl' }] });
+  const client = createWhatsAppClient({ token: 'tok', phoneNumberId: '123', fetch: fn });
+  await client.sendTemplate({ to: '972500000000', templateName: 'reminder', language: 'he', params: ['Dana'] });
+  const sent = JSON.parse(calls[0].init.body);
+  assert.equal(sent.type, 'template');
+  assert.deepEqual(sent.template, {
+    name: 'reminder',
+    language: { code: 'he' },
+    components: [{ type: 'body', parameters: [{ type: 'text', text: 'Dana' }] }],
+  });
+});
+
+test('a network failure becomes a WhatsAppError', async () => {
+  const client = createWhatsAppClient({ token: 'tok', phoneNumberId: '123', fetch: async () => { throw new Error('ECONNRESET'); } });
+  await assert.rejects(() => client.sendText({ to: '972500000000', text: 'hi' }), WhatsAppError);
+});
+
+test('T-17: a quick-reply button counts as text; an empty text body is unsupported, never ""', () => {
+  const client = createWhatsAppClient({ token: 'tok', phoneNumberId: '123', fetch: stubFetch(200, {}).fn });
+  const payload = {
+    entry: [{ changes: [{ value: { messages: [
+      { id: 'wamid.b1', from: '972500000000', type: 'button', button: { text: 'כן' } },
+      { id: 'wamid.e1', from: '972500000000', type: 'text', text: { body: '' } },
+    ] } }] }],
+  };
+  assert.deepEqual(client.parseIncoming(payload), [
+    { kind: 'text', messageId: 'wamid.b1', from: '972500000000', text: 'כן' },
+    { kind: 'unsupported', messageId: 'wamid.e1', from: '972500000000', mediaType: 'text', text: null },
+  ]);
+});

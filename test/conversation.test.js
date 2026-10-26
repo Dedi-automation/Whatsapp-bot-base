@@ -79,3 +79,20 @@ test('handoff to the agent sets agent_action_required on the conversation', asyn
 
 test('T-09: DRY RUN end to end (todo: needs Branch E test mode and all modules)', { todo: 'Step 2 integration' }, () => {});
 test('T-10: test mode ends with 4 to 6 questions to the agent (todo: section 9, Branch E)', { todo: 'Branch E' }, () => {});
+
+test('the AI gets the full transcript, and the reply is saved as the next record', async () => {
+  const { engine, ai, storage } = build({ aiReplies: [{ text: 'one' }, { text: 'two' }] });
+  await engine.handleIncoming(textMsg('wamid.a'));
+  const outcome = await engine.handleIncoming(textMsg('wamid.b'));
+  assert.deepEqual(ai.calls[1].messages.map((m) => m.role), ['user', 'assistant', 'user']);
+  const reply = await storage.get('messages', `${outcome.conversationId}:4`);
+  assert.equal(reply.role, 'assistant');
+  assert.equal(reply.text, 'two');
+});
+
+test('T-17: outside the send window a voice note gets no reply either', async () => {
+  const { engine, whatsapp } = build({ withinWindow: false });
+  const outcome = await engine.handleIncoming({ kind: 'unsupported', messageId: 'wamid.v2', from: '972500000000', mediaType: 'audio', text: null });
+  assert.equal(outcome.status, 'outside_window');
+  assert.equal(whatsapp.sent.length, 0);
+});

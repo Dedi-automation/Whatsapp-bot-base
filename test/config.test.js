@@ -34,3 +34,20 @@ test('loads a complete environment into the camelCase Config shape', () => {
   assert.equal(config.aiModel, 'value-of-AI_MODEL');
   assert.equal(config.firestoreProjectId, 'value-of-FIRESTORE_PROJECT_ID');
 });
+
+test('T-01: a whitespace-only value counts as missing', () => {
+  const env = fullEnv();
+  env.AI_MODEL = '   ';
+  assert.throws(() => loadConfig(env), (err) => err instanceof ConfigError && err.missing.join() === 'AI_MODEL');
+});
+
+test('PORT is optional with default 8080; an invalid PORT fails at startup', () => {
+  assert.equal(loadConfig(fullEnv()).port, 8080);
+  assert.equal(loadConfig({ ...fullEnv(), PORT: '3000' }).port, 3000);
+  assert.throws(() => loadConfig({ ...fullEnv(), PORT: 'abc' }), (err) => err instanceof ConfigError && err.missing.join() === 'PORT');
+});
+
+test('HEALTH_CHECK_PHONE is optional (F-17)', () => {
+  assert.equal(loadConfig(fullEnv()).healthCheck.phone, undefined);
+  assert.equal(loadConfig({ ...fullEnv(), HEALTH_CHECK_PHONE: '972500000000' }).healthCheck.phone, '972500000000');
+});
