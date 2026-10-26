@@ -15,7 +15,9 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          # node --test expands the "test/**/*.test.js" glob only from Node 21 on;
+          # on Node 20 it finds no test file. Same major as the cloud session.
+          node-version: 22
           cache: npm
       - uses: actions/setup-java@v4
         with:
@@ -35,11 +37,15 @@ jobs:
       - name: npm test
         env:
           FIRESTORE_EMULATOR_HOST: 127.0.0.1:8080
+        # The default run shell has no pipefail; without it a failing npm test is hidden by tee.
+        shell: bash
         run: npm test 2>&1 | tee test-output.txt
       - name: Fail if any Firestore case was skipped or no test ran
         run: |
-          grep -E '^# (tests|pass|fail|skipped|todo) ' test-output.txt | tee -a "$GITHUB_STEP_SUMMARY"
-          echo "::notice title=Test counts::$(grep -E '^# (tests|pass|fail|skipped|todo) ' test-output.txt | tr '\n' ' ')"
+          counts="$(grep -E '^# (tests|pass|fail|skipped|todo) ' test-output.txt || true)"
+          echo "$counts" >> "$GITHUB_STEP_SUMMARY"
+          echo "::notice title=Test counts::$(echo "$counts" | tr '\n' ' ')"
+          tail -5 test-output.txt
           if grep -Eq '^# skipped [1-9]' test-output.txt; then
             echo "Firestore cases were skipped; they must run with the emulator."
             exit 1
