@@ -27,3 +27,22 @@ test('text that is already safe, including Hebrew, is unchanged', () => {
 test('escaping twice is visible, so callers escape exactly once', () => {
   assert.equal(escapeHtml(escapeHtml('&')), '&amp;amp;');
 });
+
+const { html, raw, SafeHtml } = require('../src/html');
+
+test('F-01/F-21: the html tag escapes every interpolated value', () => {
+  const name = '<script>alert(1)</script>';
+  const page = html`<p title="${name}">${name}</p>`;
+  assert.ok(page instanceof SafeHtml);
+  assert.equal(String(page), '<p title="&lt;script&gt;alert(1)&lt;/script&gt;">&lt;script&gt;alert(1)&lt;/script&gt;</p>');
+});
+
+test('html tag: nested html and raw markup are kept, arrays are escaped item by item', () => {
+  const rows = ['<b>', 'ok'].map((v) => html`<li>${v}</li>`);
+  assert.equal(String(html`<ul>${rows}</ul>${raw('<hr>')}`), '<ul><li>&lt;b&gt;</li><li>ok</li></ul><hr>');
+  assert.equal(String(html`${['<i>', 1]}`), '&lt;i&gt;1');
+});
+
+test('html tag: null, undefined and false render as nothing; 0 renders', () => {
+  assert.equal(String(html`[${null}${undefined}${false}${0}]`), '[0]');
+});
