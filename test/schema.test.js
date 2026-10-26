@@ -47,3 +47,36 @@ test('F-12: an unknown tab or field ID is an error, not a guessed column', () =>
   assert.throws(() => headerFor(schema, 'leads', 'nope'), SchemaError);
   assert.throws(() => headerFor(schema, 'missing-tab', 'status'), SchemaError);
 });
+
+// Added in Branch A.
+
+test('F-07: a duplicate header within a tab fails schema validation', () => {
+  const bad = {
+    leads: { fields: { a: { header: 'Status', required: true }, b: { header: 'Status' } } },
+  };
+  assert.throws(() => validateSchema(bad), SchemaError);
+});
+
+test('F-07: an empty header fails schema validation', () => {
+  assert.throws(() => validateSchema({ leads: { fields: { a: { header: '' } } } }), SchemaError);
+});
+
+test('a valid schema passes validation and is returned', () => {
+  assert.equal(validateSchema(schema), schema);
+});
+
+test('T-12: every missing required header is listed, not only the first', () => {
+  assert.throws(
+    () => checkHeaders(schema, 'leads', ['Preferred callback time']),
+    (err) => err instanceof SchemaError && err.missing.length === 2
+      && err.missing.includes('Customer ID') && err.missing.includes('Status')
+  );
+});
+
+test('T-12: an optional header may be missing', () => {
+  assert.doesNotThrow(() => checkHeaders(schema, 'leads', ['Customer ID', 'Status']));
+});
+
+test('T-12: checkHeaders on an unknown tab is an error', () => {
+  assert.throws(() => checkHeaders(schema, 'missing-tab', ['Status']), SchemaError);
+});
