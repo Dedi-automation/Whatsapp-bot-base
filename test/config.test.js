@@ -51,3 +51,9 @@ test('HEALTH_CHECK_PHONE is optional (F-17)', () => {
   assert.equal(loadConfig(fullEnv()).healthCheck.phone, undefined);
   assert.equal(loadConfig({ ...fullEnv(), HEALTH_CHECK_PHONE: '972500000000' }).healthCheck.phone, '972500000000');
 });
+
+test('HEALTH_CHECK_ALERT_PHONE is optional and loads as healthCheck.alertPhone', () => {
+  assert.equal(loadConfig(fullEnv()).healthCheck.alertPhone, undefined);
+  const config = loadConfig({ ...fullEnv(), HEALTH_CHECK_PHONE: '972500000001', HEALTH_CHECK_ALERT_PHONE: '972500000002' });
+  assert.deepEqual({ ...config.healthCheck }, { phone: '972500000001', alertPhone: '972500000002' });
+});

@@ -118,3 +118,11 @@ test('handoff is still recorded when the reply cannot be sent', async () => {
   await assert.rejects(() => engine.handleIncoming(textMsg('wamid.fail')), WhatsAppError);
   assert.equal((await storage.get('conversations', '972500000000')).agent_action_required, true);
 });
+
+test('an image is saved in the transcript with its media reference', async () => {
+  const { engine, storage } = build();
+  const media = { id: 'media-1', mimeType: 'image/jpeg', caption: null };
+  const outcome = await engine.handleIncoming({ kind: 'unsupported', messageId: 'wamid.img', from: '972500000000', mediaType: 'image', text: null, media });
+  const saved = await storage.get('messages', `${outcome.conversationId}:1`);
+  assert.deepEqual(saved.media, media);
+});

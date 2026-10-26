@@ -86,3 +86,41 @@ test('T-17: a quick-reply button counts as text; an empty text body is unsupport
     { kind: 'unsupported', messageId: 'wamid.e1', from: '972500000000', mediaType: 'text', text: null },
   ]);
 });
+
+test('an image keeps its media ID, type and caption so it can be stored', () => {
+  const client = createWhatsAppClient({ token: 'tok', phoneNumberId: '123', fetch: stubFetch(200, {}).fn });
+  const payload = {
+    entry: [{ changes: [{ value: { messages: [
+      { id: 'wamid.i1', from: '972500000000', type: 'image', image: { id: 'media-1', mime_type: 'image/jpeg', caption: 'צילום מסך' } },
+    ] } }] }],
+  };
+  assert.deepEqual(client.parseIncoming(payload), [{
+    kind: 'unsupported', messageId: 'wamid.i1', from: '972500000000', mediaType: 'image', text: null,
+    media: { id: 'media-1', mimeType: 'image/jpeg', caption: 'צילום מסך' },
+  }]);
+});
+
+test('downloadMedia resolves the media URL, then fetches the file with the token', async () => {
+  const calls = [];
+  const fn = async (url, init) => {
+    calls.push({ url, init });
+    if (url.endsWith('/media-1')) {
+      return { ok: true, status: 200, json: async () => ({ url: 'https://lookaside.example/file', mime_type: 'image/jpeg' }) };
+    }
+    return { ok: true, status: 200, arrayBuffer: async () => new Uint8Array([1, 2, 3]).buffer };
+  };
+  const client = createWhatsAppClient({ token: 'tok', phoneNumberId: '123', fetch: fn });
+  const result = await client.downloadMedia({ mediaId: 'media-1' });
+  assert.deepEqual([...result.data], [1, 2, 3]);
+  assert.equal(result.mimeType, 'image/jpeg');
+  assert.match(calls[0].url, /graph\.facebook\.com\/v21\.0\/media-1$/);
+  assert.equal(calls[1].url, 'https://lookaside.example/file');
+  assert.equal(calls[1].init.headers.Authorization, 'Bearer tok');
+});
+
+test('downloadMedia fails with a WhatsAppError on an API error or a non-https URL', async () => {
+  const apiError = createWhatsAppClient({ token: 'tok', phoneNumberId: '123', fetch: stubFetch(404, { error: { code: 100, message: 'no media' } }).fn });
+  await assert.rejects(() => apiError.downloadMedia({ mediaId: 'x' }), (err) => err instanceof WhatsAppError && err.status === 404);
+  const httpUrl = createWhatsAppClient({ token: 'tok', phoneNumberId: '123', fetch: stubFetch(200, { url: 'http://insecure.example/f' }).fn });
+  await assert.rejects(() => httpUrl.downloadMedia({ mediaId: 'x' }), WhatsAppError);
+});

@@ -9,6 +9,7 @@
 const { WhatsAppError } = require('./errors');
 
 const DEFAULT_BASE_URL = 'https://graph.facebook.com/v21.0';
+const MEDIA_TYPES = new Set(['image', 'audio', 'video', 'document', 'sticker']);
 
 /**
  * Result of parsing one incoming webhook message.
@@ -16,12 +17,19 @@ const DEFAULT_BASE_URL = 'https://graph.facebook.com/v21.0';
  * - kind 'unsupported': voice note, image, sticker, etc. text is null. The
  *   conversation engine must still send a defined reply (T-17, F-20).
  *
+ * - media: present on an 'unsupported' message when WhatsApp sent a media ID
+ *   (image, audio, video, document, sticker). The file itself is fetched with
+ *   downloadMedia, so it can be stored and shown on the agent's dashboard.
+ *
+ * @typedef {{id: string, mimeType: string | null, caption: string | null}} MediaRef
  * @typedef {{kind: 'text', messageId: string, from: string, text: string}
- *         | {kind: 'unsupported', messageId: string, from: string, mediaType: string, text: null}} IncomingMessage
+ *         | {kind: 'unsupported', messageId: string, from: string, mediaType: string, text: null, media?: MediaRef}} IncomingMessage
  *
  * @typedef {Object} WhatsAppClient
  * @property {(input: {to: string, text: string}) => Promise<{messageId: string}>} sendText
  * @property {(input: {to: string, templateName: string, language: string, params: string[]}) => Promise<{messageId: string}>} sendTemplate
+ * @property {(input: {mediaId: string}) => Promise<{data: Buffer, mimeType: string | null}>} downloadMedia
+ *   Two calls: the media ID gives a short-lived URL, then the file is fetched with the token.
  * @property {(payload: unknown) => IncomingMessage[]} parseIncoming
  *   Returns one entry per message in the payload. Status updates produce no entry.
  */
@@ -39,27 +47,24 @@ const DEFAULT_BASE_URL = 'https://graph.facebook.com/v21.0';
 function createWhatsAppClient(options) {
   const { token, phoneNumberId, fetch: fetchFn = globalThis.fetch, baseUrl = DEFAULT_BASE_URL } = options || {};
   if (!token || !phoneNumberId) throw new WhatsAppError('token and phoneNumberId are required');
-  const messagesUrl = `${baseUrl.replace(/\/+$/, '')}/${phoneNumberId}/messages`;
+  const apiBase = baseUrl.replace(/\/+$/, '');
+  const messagesUrl = `${apiBase}/${phoneNumberId}/messages`;
 
-  async function post(body) {
-    let response;
+  async function call(url, init) {
     try {
-      response = await fetchFn(messagesUrl, {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ messaging_product: 'whatsapp', recipient_type: 'individual', ...body }),
-      });
+      return await fetchFn(url, { ...init, headers: { Authorization: `Bearer ${token}`, ...(init.headers || {}) } });
     } catch (err) {
       throw new WhatsAppError(`WhatsApp request failed: ${err.message}`);
     }
+  }
 
+  async function readJson(response) {
     let data = null;
     try {
       data = await response.json();
     } catch {
-      // Non-JSON body. Handled below.
+      // Non-JSON body. Handled by the caller.
     }
-
     if (!response.ok) {
       const apiError = (data && data.error) || {};
       throw new WhatsAppError(`WhatsApp API error ${response.status}: ${apiError.message || 'no details'}`, {
@@ -67,6 +72,16 @@ function createWhatsAppClient(options) {
         code: apiError.code,
       });
     }
+    return data;
+  }
+
+  async function post(body) {
+    const response = await call(messagesUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ messaging_product: 'whatsapp', recipient_type: 'individual', ...body }),
+    });
+    const data = await readJson(response);
     const messageId = data && Array.isArray(data.messages) && data.messages[0] && data.messages[0].id;
     if (!messageId) throw new WhatsAppError('WhatsApp API response has no message ID', { status: response.status });
     return { messageId };
@@ -83,6 +98,18 @@ function createWhatsAppClient(options) {
         template.components = [{ type: 'body', parameters: params.map((value) => ({ type: 'text', text: String(value) })) }];
       }
       return post({ to, type: 'template', template });
+    },
+
+    async downloadMedia({ mediaId }) {
+      if (typeof mediaId !== 'string' || mediaId === '') throw new WhatsAppError('mediaId is required');
+      const meta = await readJson(await call(`${apiBase}/${encodeURIComponent(mediaId)}`, { method: 'GET' }));
+      if (!meta || typeof meta.url !== 'string' || !meta.url.startsWith('https://')) {
+        // The token is sent to this URL, so only an https URL from the API is followed.
+        throw new WhatsAppError('WhatsApp media response has no https URL');
+      }
+      const file = await call(meta.url, { method: 'GET' });
+      if (!file.ok) throw new WhatsAppError(`WhatsApp media download failed: ${file.status}`, { status: file.status });
+      return { data: Buffer.from(await file.arrayBuffer()), mimeType: typeof meta.mime_type === 'string' ? meta.mime_type : null };
     },
 
     parseIncoming(payload) {
@@ -114,7 +141,16 @@ function parseMessage(message) {
   const base = { messageId: message.id, from: message.from };
   const text = textOf(message);
   if (typeof text === 'string' && text.trim() !== '') return { kind: 'text', ...base, text };
-  return { kind: 'unsupported', ...base, mediaType: typeof message.type === 'string' ? message.type : 'unknown', text: null };
+  const parsed = { kind: 'unsupported', ...base, mediaType: typeof message.type === 'string' ? message.type : 'unknown', text: null };
+  const media = MEDIA_TYPES.has(message.type) && message[message.type];
+  if (media && typeof media.id === 'string') {
+    parsed.media = {
+      id: media.id,
+      mimeType: typeof media.mime_type === 'string' ? media.mime_type : null,
+      caption: typeof media.caption === 'string' ? media.caption : null,
+    };
+  }
+  return parsed;
 }
 
 function textOf(message) {

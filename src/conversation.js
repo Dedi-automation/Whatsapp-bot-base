@@ -102,6 +102,8 @@ function createConversationEngine(deps) {
         kind: message.kind,
         text: message.kind === 'text' ? message.text : null,
         mediaType: message.kind === 'unsupported' ? message.mediaType : null,
+        // Reference only; the file is fetched with whatsapp.downloadMedia (Branch E stores it).
+        media: message.kind === 'unsupported' && message.media ? message.media : null,
         messageId: message.messageId,
         at: receivedAt.toISOString(),
       });

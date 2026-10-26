@@ -38,7 +38,9 @@ const REQUIRED_ENV = Object.freeze([
  * @property {string} scheduledJobToken
  * @property {string} appBaseUrl
  * @property {number} port                 PORT, optional (default 8080). Invalid value: ConfigError
- * @property {{phone: string|undefined}} healthCheck  HEALTH_CHECK_PHONE, optional (F-17)
+ * @property {{phone: string|undefined, alertPhone: string|undefined}} healthCheck
+ *   HEALTH_CHECK_PHONE: recipient of the health check message, optional (F-17).
+ *   HEALTH_CHECK_ALERT_PHONE: gets a copy of every failed check (owner decision 2026-10-26), optional.
  */
 
 /**
@@ -55,6 +57,7 @@ function loadConfig(env = process.env) {
   // An empty or whitespace-only value counts as missing. Values are never trimmed
   // or printed: they may be secrets.
   const isSet = (name) => typeof env[name] === 'string' && env[name].trim() !== '';
+  const optional = (name) => (isSet(name) ? env[name] : undefined);
   const missing = REQUIRED_ENV.filter((name) => !isSet(name));
   if (missing.length > 0) throw new ConfigError(missing);
 
@@ -80,7 +83,10 @@ function loadConfig(env = process.env) {
     scheduledJobToken: env.SCHEDULED_JOB_TOKEN,
     appBaseUrl: env.APP_BASE_URL,
     port,
-    healthCheck: Object.freeze({ phone: isSet('HEALTH_CHECK_PHONE') ? env.HEALTH_CHECK_PHONE : undefined }),
+    healthCheck: Object.freeze({
+      phone: optional('HEALTH_CHECK_PHONE'),
+      alertPhone: optional('HEALTH_CHECK_ALERT_PHONE'),
+    }),
   });
 }
 
