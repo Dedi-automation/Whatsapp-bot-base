@@ -36,13 +36,18 @@ const has = (...names) => names.every((n) => typeof env[n] === 'string' && env[n
 async function firestorePart() {
   if (!has('FIRESTORE_PROJECT_ID', 'GOOGLE_APPLICATION_CREDENTIALS_JSON')) return ['not run', 'FIRESTORE_PROJECT_ID or GOOGLE_APPLICATION_CREDENTIALS_JSON not set'];
   if (env.FIRESTORE_EMULATOR_HOST) return ['FAIL', 'FIRESTORE_EMULATOR_HOST is set; this check must reach the real test project'];
+  const projectId = env.FIRESTORE_PROJECT_ID.trim();
+  if (!/^[a-z][a-z0-9-]{4,28}[a-z0-9]$/.test(projectId)) {
+    // Name the odd characters by code (a copy from a right-to-left page can carry invisible marks).
+    const odd = [...projectId].filter((c) => !/[a-z0-9-]/.test(c)).map((c) => `U+${c.codePointAt(0).toString(16).toUpperCase().padStart(4, '0')}`);
+    return ['FAIL', `FIRESTORE_PROJECT_ID is not a valid project ID (length ${projectId.length}, other characters: ${odd.join(' ') || 'none'})`];
+  }
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'smoke-'));
   const keyFile = path.join(dir, 'key.json');
   fs.writeFileSync(keyFile, env.GOOGLE_APPLICATION_CREDENTIALS_JSON, { mode: 0o600 });
   process.env.GOOGLE_APPLICATION_CREDENTIALS = keyFile;
   try {
-    // A value pasted into the GitHub secret form can carry a trailing line break.
-    const storage = createStorage({ projectId: env.FIRESTORE_PROJECT_ID.trim() });
+    const storage = createStorage({ projectId });
     const id = `smoke-${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
     await storage.set('smoke_checks', id, { at: new Date().toISOString(), source: 'smoke-real' });
     const back = await storage.get('smoke_checks', id);
@@ -50,7 +55,7 @@ async function firestorePart() {
     const gone = (await storage.get('smoke_checks', id)) === null;
     return back && gone ? ['PASS', 'write, read back and delete on the test project'] : ['FAIL', 'record not read back or not deleted'];
   } catch (err) {
-    return ['FAIL', `${err.name}: ${err.message}`];
+    return ['FAIL', `${err.name}: ${String(err.message).replace(/\s+/g, ' ')}`];
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
