@@ -10,6 +10,8 @@
 // (now the owner's test number; in production the clerk's or client's number). When any
 // check fails, a copy of the problem also goes to the alert phone, so the owner always
 // hears about a problem at once (Dedi, 2026-10-26). Both numbers come from config.
+// The send window does not apply here: the owner gets alerts on any day and hour
+// (Dedi, 2026-10-26). Recipients and timing for a client's bot are set per client at go-live.
 
 const PROBE_COLLECTION = 'health_checks';
 const PROBE_ID = 'probe';
