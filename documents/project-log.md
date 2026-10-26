@@ -78,3 +78,20 @@
 - Merged into main at 015346e (merge commit, by Dedi). `npm test` on main after merge, no emulator: 109 tests, 76 pass, 23 fail (branch B and E stubs), 8 skipped (Firestore emulator cases), 2 todo. `test/schema.test.js` + `test/storage.test.js`: 30 pass, 0 fail, 8 skipped.
 - Rollback: revert merge commit 015346e (`git revert -m 1 015346e`); it touches only branch A's files, package.json and package-lock.json.
 - Next: branch E (testing) rebases on main and merges, then branch B.
+## 2026-10-26 - step 1, branch E (Testing) - branch-e/testing, PR #5
+
+- Scope: B12 health check `src/health.js`, section 9 test mode (new `src/test-mode.js`), `test/health.test.js` (tests added only), new `test/test-mode.test.js`. No shared file, no dependency. Branch commits after rebase on 7209694: ec18d59, 7ea9be8, e186723, 4380151, a099c31, bcf4a94.
+- Health check: storage probe (write, read back, delete), AI client presence check with no model call, and a real WhatsApp result message on every run to `config.healthCheck.phone`. On any failure a copy goes to `config.healthCheck.alertPhone` (HEALTH_CHECK_ALERT_PHONE, added to config by branch B). Each check is guarded by a timeout; failures are reported, never thrown.
+- Test mode: ends a trial with 4 to 6 fixed per-bot questions, one at a time, then a closing text. Each answer is an improvement record (`improvements/${trialId}:${seq}`). Screenshots and media are saved with the notes; the file is stored base64 in `media` via branch B's `downloadMedia` (cap 700 KiB, reference and reason kept otherwise). Send window honoured for test-mode messages, with resume of a pending question.
+- Recommendations: after a closed trial, the AI client gets the prompt, that trial's transcript and notes, and proposes prompt changes saved as `pending_approval` in `recommendations`. Only the owner approves or rejects; nothing edits the prompt automatically.
+- Findings closed: F-17 (health part). F-23 narrowed (one trial per AI call, owner approval), not closed. T-10 covered in `test/test-mode.test.js`; the T-10 todo in `test/conversation.test.js` is switched on in step 2.
+- Decided by Dedi (2026-10-26):
+  - Test screenshots and media are stored in the database and shown in the agent's dashboard (closes the decisions.md Open item on screenshots and who sees notes).
+  - Feedback questions are fixed per-bot text from config.
+  - Feedback and conversations produce prompt recommendations that the owner approves manually, as in MyDoctor (answers the decisions.md Open item on improvement-review.js: kept, inside test mode).
+  - Every health check sends a real WhatsApp message to a configurable number (test number now; clerk or client in production). On failure a copy goes to the owner.
+  - Health alerts to the owner ignore the send window. Per-client recipients and timing are set at go-live.
+- Tests: own files 42/42 pass. Full run history (20 runs, with rollback points) is in the PR #5 body. Branch dry run (fakes only, nothing real sent): healthy and failing health check, alert copy, full trial with a screenshot, one recommendation; pass. T-09 full DRY RUN deferred to step 2.
+- Merged into main at c907c5e (merge commit, by Dedi). `npm test` on main after merge, no emulator: 148 tests, 118 pass, 20 fail (branch B stubs), 8 skipped (Firestore emulator cases), 2 todo. `test/health.test.js` + `test/test-mode.test.js`: 42 pass, 0 fail. Branch E dry run on main: pass.
+- Rollback: revert merge commit c907c5e (`git revert -m 1 c907c5e`); it touches only branch E's four files.
+- Next: branch B (WhatsApp and entry, PR #1) rebases on main and merges. Then step 2 integration.
