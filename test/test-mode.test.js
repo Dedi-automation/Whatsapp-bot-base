@@ -5,7 +5,7 @@
 // Uses the fakes for B3 and B5.
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const { createTestMode, TestModeError } = require('../src/test-mode');
+const { createTestMode, TestModeError, MAX_MEDIA_BYTES } = require('../src/test-mode');
 const { checkHealth } = require('../src/health');
 const { createMemoryStorage } = require('../src/fakes/memory-storage');
 const { createFakeWhatsAppClient } = require('../src/fakes/whatsapp-fake');
@@ -223,7 +223,11 @@ test('DRY RUN (Branch E): health check, full test-mode cycle and recommendations
     questions: QUESTIONS,
     closingText: CLOSING,
   });
+  whatsapp.downloadMedia = async () => ({ data: Buffer.from('dry-run screenshot'), mimeType: 'image/png' });
   let outcome = await mode.endTrial(TRIAL);
+  const shot = await mode.handleMedia({ trialId: 'trial-1', mediaType: 'image', mediaId: 'dry-media-1', caption: 'screenshot' });
+  t.diagnostic(`screenshot ${shot.saved} stored in database: ${shot.stored}`);
+  assert.equal(shot.stored, true);
   let n = 0;
   while (outcome.status === 'question_sent') {
     n += 1;
@@ -237,7 +241,7 @@ test('DRY RUN (Branch E): health check, full test-mode cycle and recommendations
   assert.equal(recs[0].data.status, 'pending_approval');
 
   assert.equal(outcome.status, 'closed');
-  assert.equal(notes.length, QUESTIONS.length);
+  assert.equal(notes.length, QUESTIONS.length + 1);
   assert.equal(whatsapp.sent.length, 1 + QUESTIONS.length + 1);
 });
 
@@ -246,7 +250,9 @@ test('a screenshot is saved in storage with the current question and sends nothi
   await mode.endTrial(TRIAL);
   const { saved } = await mode.handleMedia({ trialId: 'trial-1', mediaType: 'image', mediaId: 'media-1', caption: 'see this' });
   const record = await storage.get('improvements', saved);
-  assert.deepEqual(record.media, { type: 'image', id: 'media-1' });
+  assert.equal(record.media.type, 'image');
+  assert.equal(record.media.id, 'media-1');
+  assert.equal(record.media.stored, false);
   assert.equal(record.question, QUESTIONS[0]);
   assert.equal(record.answer, 'see this');
   assert.equal(whatsapp.sent.length, 1);
@@ -358,4 +364,57 @@ test('a decision must be approved or rejected, by a named person', async () => {
   await mode.proposeRecommendations({ trialId: 'trial-1', currentPrompt: 'p' });
   await assert.rejects(() => mode.decideRecommendation({ id: 'trial-1:1', decision: 'auto', decidedBy: 'Dedi' }), TestModeError);
   await assert.rejects(() => mode.decideRecommendation({ id: 'trial-1:1', decision: 'approved', decidedBy: '' }), TestModeError);
+});
+
+// Media download (Branch B adds whatsapp.downloadMedia; the shared fake has none, so
+// these tests inject a stub on top of the fake).
+
+function buildWithDownload(downloadMedia) {
+  const storage = createMemoryStorage({ projectId: 'test-a' });
+  const whatsapp = Object.assign(createFakeWhatsAppClient(), { downloadMedia });
+  const mode = createTestMode({
+    storage,
+    whatsapp,
+    isWithinSendWindow: () => true,
+    now: () => new Date('2026-10-25T10:00:00Z'),
+    questions: QUESTIONS,
+    closingText: CLOSING,
+  });
+  return { storage, mode };
+}
+
+test('a downloaded screenshot is stored in the database under the note ID', async () => {
+  const png = Buffer.from('fake-png-bytes');
+  const { storage, mode } = buildWithDownload(async ({ mediaId }) => {
+    assert.equal(mediaId, 'media-1');
+    return { data: png, mimeType: 'image/png' };
+  });
+  await mode.endTrial(TRIAL);
+  const result = await mode.handleMedia({ trialId: 'trial-1', mediaType: 'image', mediaId: 'media-1', mimeType: null, caption: null });
+  assert.equal(result.stored, true);
+
+  const file = await storage.get('media', result.saved);
+  assert.equal(Buffer.from(file.data, 'base64').toString(), 'fake-png-bytes');
+  assert.equal(file.mimeType, 'image/png');
+  assert.equal((await storage.get('improvements', result.saved)).media.stored, true);
+});
+
+test('a file over the size limit keeps the reference and the reason, not the file', async () => {
+  const { storage, mode } = buildWithDownload(async () => ({ data: Buffer.alloc(MAX_MEDIA_BYTES + 1), mimeType: 'video/mp4' }));
+  await mode.endTrial(TRIAL);
+  const result = await mode.handleMedia({ trialId: 'trial-1', mediaType: 'video', mediaId: 'media-big' });
+  assert.equal(result.stored, false);
+  assert.equal(await storage.get('media', result.saved), null);
+  assert.match((await storage.get('improvements', result.saved)).media.detail, /over the/);
+});
+
+test('a failed download keeps the note and the reason', async () => {
+  const { WhatsAppError } = require('../src/errors');
+  const { storage, mode } = buildWithDownload(async () => { throw new WhatsAppError('expired', { status: 404 }); });
+  await mode.endTrial(TRIAL);
+  const result = await mode.handleMedia({ trialId: 'trial-1', mediaType: 'image', mediaId: 'media-x', caption: 'look' });
+  assert.equal(result.stored, false);
+  const note = await storage.get('improvements', result.saved);
+  assert.equal(note.answer, 'look');
+  assert.match(note.media.detail, /download failed: expired/);
 });

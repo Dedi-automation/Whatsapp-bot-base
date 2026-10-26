@@ -22,6 +22,7 @@
 // - 'test_sessions' / trialId: {conversationId, agentPhone, status, questionIndex, asked, ...}
 // - 'improvements' / `${trialId}:${seq}`: one record per answer.
 // - 'recommendations' / `${trialId}:${seq}`: one record per proposed prompt change.
+// - 'media' / same ID as its improvement record: the downloaded file, base64.
 
 const MIN_QUESTIONS = 4;
 const MAX_QUESTIONS = 6;
@@ -29,6 +30,9 @@ const SESSIONS = 'test_sessions';
 const IMPROVEMENTS = 'improvements';
 const RECOMMENDATIONS = 'recommendations';
 const TRANSCRIPT = 'messages';
+const MEDIA = 'media';
+// Firestore documents are limited to 1 MiB; base64 adds a third, so files are capped below that.
+const MAX_MEDIA_BYTES = 700 * 1024;
 
 /** Tool the AI client is forced to use when proposing recommendations. */
 const RECOMMENDATION_TOOL = {
@@ -226,19 +230,39 @@ function createTestMode(deps) {
     },
 
     /**
-     * Saves a screenshot or other media the agent sends during feedback as an
-     * improvement record, so it is kept in the database next to the notes and can
-     * be shown in the agent's dashboard (Dedi, 2026-10-26). Only a reference is
-     * stored here; downloading the file from WhatsApp is a B5 contract change.
+     * Saves a screenshot or other media the agent sends during feedback, so it is kept
+     * in the database next to the notes and can be shown in the agent's dashboard
+     * (Dedi, 2026-10-26). The improvement record holds the reference. When the WhatsApp
+     * client can download media, the file is stored in 'media' under the same ID.
+     * A file over MAX_MEDIA_BYTES or a failed download keeps the reference only, with
+     * the reason in `media.stored`/`media.detail`, so the note is never lost.
      * Does not advance the questions and sends nothing.
-     * @param {{trialId: string, mediaType: string, mediaId: string, caption?: string}} input
-     * @returns {Promise<{saved: string}>}
+     * @param {{trialId: string, mediaType: string, mediaId: string, mimeType?: string | null, caption?: string | null}} input
+     * @returns {Promise<{saved: string, stored: boolean}>}
      */
-    async handleMedia({ trialId, mediaType, mediaId, caption }) {
+    async handleMedia({ trialId, mediaType, mediaId, mimeType, caption }) {
       if (!isNonEmptyString(mediaType) || !isNonEmptyString(mediaId)) {
         throw new TestModeError('mediaType and mediaId are required');
       }
       const session = await loadSession(trialId);
+
+      let file = null;
+      let detail = null;
+      if (typeof whatsapp.downloadMedia !== 'function') {
+        detail = 'WhatsApp client cannot download media';
+      } else {
+        try {
+          const { data, mimeType: downloaded } = await whatsapp.downloadMedia({ mediaId });
+          if (data.length > MAX_MEDIA_BYTES) {
+            detail = `file is ${data.length} bytes, over the ${MAX_MEDIA_BYTES} byte limit`;
+          } else {
+            file = { data: data.toString('base64'), mimeType: downloaded || mimeType || null, bytes: data.length };
+          }
+        } catch (err) {
+          detail = `download failed: ${err && err.message ? err.message : String(err)}`;
+        }
+      }
+
       const current = session.asked ? session.questionIndex : session.questionIndex - 1;
       const answered = current >= 0 && current < questions.length ? current : null;
       const seq = await saveImprovement(trialId, {
@@ -248,11 +272,15 @@ function createTestMode(deps) {
         questionIndex: answered,
         question: answered === null ? null : questions[answered],
         answer: isNonEmptyString(caption) ? caption : '',
-        media: { type: mediaType, id: mediaId },
+        media: { type: mediaType, id: mediaId, mimeType: mimeType || null, stored: file !== null, detail },
         status: 'open',
         createdAt: now().toISOString(),
       });
-      return { saved: `${trialId}:${seq}` };
+      const id = `${trialId}:${seq}`;
+      if (file) {
+        await storage.set(MEDIA, id, { trialId, mediaId, ...file, createdAt: now().toISOString() });
+      }
+      return { saved: id, stored: file !== null };
     },
 
     /**
@@ -361,4 +389,4 @@ function createTestMode(deps) {
   };
 }
 
-module.exports = { createTestMode, TestModeError, MIN_QUESTIONS, MAX_QUESTIONS, RECOMMENDATION_TOOL };
+module.exports = { createTestMode, TestModeError, MIN_QUESTIONS, MAX_QUESTIONS, MAX_MEDIA_BYTES, RECOMMENDATION_TOOL };
