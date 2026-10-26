@@ -1,7 +1,9 @@
 'use strict';
 // Branch B DRY RUN (run: node scripts/dry-run-branch-b.js): HTTP request -> server -> signature -> parse -> engine -> WhatsApp client.
 // The WhatsApp client is real; its fetch only records requests, nothing leaves the machine.
-// AI and storage are the step 0 fakes; the send window is a stub (branch D not merged).
+// Real modules from branches C and D: AI client (with a recording fetch that returns
+// queued tool calls) and send window. Storage is the in-memory fake (Firestore needs
+// the emulator; branch A covers that).
 const root = require('node:path').join(__dirname, '..', 'src');
 const crypto = require('node:crypto');
 const { loadConfig, REQUIRED_ENV } = require(root + '/config');
@@ -10,7 +12,8 @@ const { createWhatsAppClient } = require(root + '/whatsapp');
 const { createConversationEngine } = require(root + '/conversation');
 const { createServer } = require(root + '/server');
 const { createMemoryStorage } = require(root + '/fakes/memory-storage');
-const { createFakeAiClient } = require(root + '/fakes/ai-fake');
+const { createAiClient } = require(root + '/ai');
+const { isWithinSendWindow } = require(root + '/schedule-window');
 
 const config = loadConfig(Object.fromEntries(REQUIRED_ENV.map((n) => [n, `dry-${n}`])));
 const wouldSend = [];
@@ -22,13 +25,21 @@ const recordingFetch = async (url, init) => {
 };
 const whatsapp = createWhatsAppClient({ token: config.whatsappToken, phoneNumberId: config.whatsappPhoneNumberId, fetch: recordingFetch });
 const storage = createMemoryStorage({ projectId: config.firestoreProjectId });
-let within = true;
+const aiQueue = [{ text: 'שלום, איך אפשר לעזור?' }, { text: 'תודה, נציג יחזור אליך בהקדם', handoff: true, handoff_reason: 'price question' }];
+const aiRequests = [];
+const aiFetch = async (url, init) => {
+  aiRequests.push(JSON.parse(init.body));
+  const input = aiQueue.shift();
+  return { ok: true, status: 200, json: async () => ({ stop_reason: 'tool_use', content: [{ type: 'tool_use', name: 'send_whatsapp_reply', input }] }) };
+};
+// Monday 26 Oct 2026, 12:00 Israel time (inside the window). Step 6 moves to Friday.
+let clock = new Date('2026-10-26T10:00:00Z');
 const engine = createConversationEngine({
   storage, whatsapp,
-  ai: createFakeAiClient([{ text: 'שלום, איך אפשר לעזור?' }, { text: 'תודה, נציג יחזור אליך בהקדם', handoff: true, handoff_reason: 'price question' }]),
+  ai: createAiClient({ apiKey: config.anthropicApiKey, model: config.aiModel, fetch: aiFetch }),
   deduplicator: createDeduplicator({ storage }),
-  isWithinSendWindow: () => within,
-  now: () => new Date('2026-10-26T09:00:00Z'),
+  isWithinSendWindow: (when) => isWithinSendWindow(when, { holidays: [] }),
+  now: () => clock,
   unsupportedReplyText: 'Sorry, I can only read text messages.',
   // Example bot that needs an ID photo: images and documents are accepted.
   acceptedMediaTypes: ['image', 'document'],
@@ -74,7 +85,7 @@ async function deliver(label, messages, { badSig = false } = {}) {
   await deliver('3c video (not accepted)', [{ id: 'w2c', from, type: 'video', video: { id: 'media-2', mime_type: 'video/mp4' } }]);
   await deliver('4 forged signature', [{ id: 'w3', from, type: 'text', text: { body: 'x' } }], { badSig: true });
   await deliver('5 handoff', [{ id: 'w4', from, type: 'text', text: { body: 'כמה זה עולה?' } }]);
-  within = false;
+  clock = new Date('2026-10-30T10:00:00Z'); // Friday
   await deliver('6 outside window', [{ id: 'w5', from, type: 'text', text: { body: 'עוד שאלה' } }]);
   const jobUrl = `${base}/jobs/send-reminders`;
   const auth = { Authorization: `Bearer ${config.scheduledJobToken}` };
@@ -86,6 +97,7 @@ async function deliver(label, messages, { badSig = false } = {}) {
   console.log('ID photo stored as:', JSON.stringify(shot.data.media));
   const conv = await storage.get('conversations', from);
   console.log('conversation:', JSON.stringify({ messageCount: conv.messageCount, agent_action_required: conv.agent_action_required, handoff_reason: conv.handoff_reason }));
+  console.log(`AI requests: ${aiRequests.length}, model ${aiRequests[0].model}, tool_choice ${aiRequests[0].tool_choice.name}`);
   console.log('would have sent:');
   for (const s of wouldSend) console.log('  ', s.url.replace(/^https:\/\/[^/]+/, ''), JSON.stringify(s.body.text));
   server.close();

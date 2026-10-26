@@ -160,9 +160,7 @@ test('createBot wires the engine to the webhook route', async (t) => {
     unsupportedReplyText: 'text only',
     log: quietLog,
   });
-  // The real send window (Branch D) is not merged yet, so this stops at the window check
-  // with an error from the stub, or replies once Branch D is merged. Either way the
-  // route reached the engine and saved the inbound message.
+  // Sunday 11:00 Israel time: inside the real send window (Branch D).
   await new Promise((resolve) => bot.server.listen(0, '127.0.0.1', resolve));
   t.after(() => new Promise((resolve) => bot.server.close(resolve)));
   const body = payload([textMessage('wamid.wired')]);
@@ -174,6 +172,7 @@ test('createBot wires the engine to the webhook route', async (t) => {
   assert.equal(res.status, 200);
   const { received, results } = await res.json();
   assert.equal(received, 1);
-  assert.ok(['replied', 'error'].includes(results[0]));
+  assert.equal(results[0], 'replied');
+  assert.equal(whatsapp.sent[0].text, 'תודה');
   assert.equal((await storage.get('messages', '972500000000:1')).messageId, 'wamid.wired');
 });
