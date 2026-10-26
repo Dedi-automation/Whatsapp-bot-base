@@ -118,3 +118,26 @@
 - A first run with the variable set but the emulator not started failed only the Firestore cases with "Firestore emulator not ready", as designed (see branch A).
 - Step 1 is complete: all five branches on main, all tests pass with the emulator (decisions.md item 23).
 - Next: step 2 integration (real Firestore and WhatsApp test setup, B10 and B11, T-01 to T-17, full DRY RUN T-09).
+
+## 2026-10-26 - stage 2 (integration, B10 email, B11 dashboard, full DRY RUN) - PRs #6, #7, #8, #9
+
+Plan: /mnt/project-files/plans/stage2-plan.md, approved by Dedi 2026-10-26. Built in the cloud session; Dedi ran nothing locally (owner rule: everything from the chat). The Firestore emulator now runs in the cloud session and in GitHub Actions.
+
+- S2-0 CI (PR #6, merge fb7282c): `.github/workflows/test.yml` runs the full suite with the Firestore emulator on every push and PR, Node 22; a skipped test or a run with no passing test fails the job. Found: `npm test` needs Node 21+ (the test glob; Node 20 finds no test file) while `package.json` engines says >=18; the first green run was hollow because the Actions shell had no pipefail. Fixed (8bf7bd5).
+- S2-1 B10 email (PR #7, merge b4564cc): `src/html.js` escape layer, `src/email.js` (notify, recommendation, validation error), SendGrid HTTP API with injected fetch, no new dependency, `EmailError`. Closes F-22 (code side). Links carry no token (F-04, F-05).
+- S2-2 B11 dashboard (PR #8, merge b7c8576): `src/admin.js`, `html` template tag. Lead board, lead page with transcript and stored media, status change, test-mode trials, owner approval of prompt recommendations. Closes F-01, F-21 (code side); F-04, F-05, F-12 for the dashboard. Login form + signed HttpOnly SameSite=Strict cookie, CSRF on every POST, token in URL refused (T-16), strict CSP.
+- S2-3 integration (PR #9, merge a6019eb): optional email config group (all three or none); dashboard mounted at /admin; handoff email to the agent; accepted customer media downloaded and stored (decisions.md item 32); test-mode routing in the engine; recommendations emailed to the owner; `scripts/dry-run.js` (T-09), T-09 and T-10 todos switched on; `scripts/release-check.js` (T-01..T-17 table); manual workflow `smoke-real.yml` + `scripts/smoke-real.js` for the real test environment (GitHub secrets `TEST_*`, not run until they exist).
+- Full test run history with rollback points is in each PR body.
+
+### Run on main after all four merges (2026-10-26, main a6019eb)
+
+| Where | Command | Result |
+|---|---|---|
+| GitHub Actions, push to main a6019eb | workflow `test` (emulator) | 234 tests, 234 pass, 0 fail, 0 skipped, 0 todo |
+| cloud session, Firestore emulator v1.19.8 | `node scripts/release-check.js` | T-01..T-14, T-16, T-17 pass; T-15 not run yet (needs the first base tag); 234 / 234 pass / 0 fail / 0 skipped; RELEASE CHECK PASS |
+| cloud session, Firestore emulator | `node scripts/dry-run.js` (T-09) | 21 checks pass; 14 messages would have been sent (12 WhatsApp, 2 email); nothing was sent |
+
+- Rollback point: main ed2a74d (end of step 1). Each PR can be reverted alone with `git revert -m 1 <merge>`, newest first: a6019eb, b7c8576, b4564cc, fb7282c.
+- Not yet done: the real test environment check (needs the `TEST_*` secrets in GitHub; the cloud session's network blocks graph.facebook.com and api.sendgrid.com, so it runs in GitHub Actions). A real incoming WhatsApp message needs a public URL (deployment).
+- Open: whether emails to the agent wait for the send window (built: they do not, like health alerts; asked Dedi).
+- Next: step 3, base 1.0.0 tag (spec section 8), after the real test environment check passes and Dedi approves.
