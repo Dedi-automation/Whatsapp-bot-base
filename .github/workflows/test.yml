@@ -39,6 +39,7 @@ jobs:
       - name: Fail if any Firestore case was skipped or no test ran
         run: |
           grep -E '^# (tests|pass|fail|skipped|todo) ' test-output.txt | tee -a "$GITHUB_STEP_SUMMARY"
+          echo "::notice title=Test counts::$(grep -E '^# (tests|pass|fail|skipped|todo) ' test-output.txt | tr '\n' ' ')"
           if grep -Eq '^# skipped [1-9]' test-output.txt; then
             echo "Firestore cases were skipped; they must run with the emulator."
             exit 1
