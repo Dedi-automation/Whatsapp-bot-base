@@ -224,3 +224,33 @@ test('DRY RUN (Branch E): health check and full test-mode cycle, nothing real se
   assert.equal(notes.length, QUESTIONS.length);
   assert.equal(whatsapp.sent.length, 1 + QUESTIONS.length + 1);
 });
+
+test('a screenshot is saved in storage with the current question and sends nothing', async () => {
+  const { mode, whatsapp, storage } = build();
+  await mode.endTrial(TRIAL);
+  const { saved } = await mode.handleMedia({ trialId: 'trial-1', mediaType: 'image', mediaId: 'media-1', caption: 'see this' });
+  const record = await storage.get('improvements', saved);
+  assert.deepEqual(record.media, { type: 'image', id: 'media-1' });
+  assert.equal(record.question, QUESTIONS[0]);
+  assert.equal(record.answer, 'see this');
+  assert.equal(whatsapp.sent.length, 1);
+
+  // The screenshot does not count as the answer: the next text answers question 1.
+  const next = await mode.handleAnswer({ trialId: 'trial-1', text: 'answer' });
+  assert.equal(next.questionIndex, 1);
+  assert.equal((await mode.listImprovements('trial-1')).length, 2);
+});
+
+test('a screenshot after the trial closed is still kept', async () => {
+  const { mode } = build({ questions: QUESTIONS.slice(0, 4) });
+  await mode.endTrial(TRIAL);
+  for (let i = 0; i < 4; i += 1) await mode.handleAnswer({ trialId: 'trial-1', text: 'ok' });
+  const { saved } = await mode.handleMedia({ trialId: 'trial-1', mediaType: 'image', mediaId: 'media-late' });
+  assert.equal(saved, 'trial-1:5');
+});
+
+test('media without type or ID is an error', async () => {
+  const { mode } = build();
+  await mode.endTrial(TRIAL);
+  await assert.rejects(() => mode.handleMedia({ trialId: 'trial-1', mediaType: 'image', mediaId: '' }), TestModeError);
+});

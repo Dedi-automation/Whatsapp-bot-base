@@ -11,7 +11,8 @@
 //   A question that could not be sent stays pending and is sent by the next call
 //   to endTrial or resume inside the window.
 // - Answers are always saved, even outside the window. Notes are never dropped.
-// - Screenshots are not stored yet (decisions.md Open: where they are stored, who sees notes).
+// - Screenshots and other media are saved in the database with the notes and are
+//   shown to the agent in the dashboard (Dedi, 2026-10-26). B11 dashboard is postponed.
 //
 // Records:
 // - 'test_sessions' / trialId: {conversationId, agentPhone, status, questionIndex, asked, ...}
@@ -173,6 +174,36 @@ function createTestMode(deps) {
 
       const outcome = await askNext(trialId, next);
       return { ...outcome, saved: `${trialId}:${seq}` };
+    },
+
+    /**
+     * Saves a screenshot or other media the agent sends during feedback as an
+     * improvement record, so it is kept in the database next to the notes and can
+     * be shown in the agent's dashboard (Dedi, 2026-10-26). Only a reference is
+     * stored here; downloading the file from WhatsApp is a B5 contract change.
+     * Does not advance the questions and sends nothing.
+     * @param {{trialId: string, mediaType: string, mediaId: string, caption?: string}} input
+     * @returns {Promise<{saved: string}>}
+     */
+    async handleMedia({ trialId, mediaType, mediaId, caption }) {
+      if (!isNonEmptyString(mediaType) || !isNonEmptyString(mediaId)) {
+        throw new TestModeError('mediaType and mediaId are required');
+      }
+      const session = await loadSession(trialId);
+      const current = session.asked ? session.questionIndex : session.questionIndex - 1;
+      const answered = current >= 0 && current < questions.length ? current : null;
+      const seq = await saveImprovement(trialId, {
+        trialId,
+        conversationId: session.conversationId,
+        agentPhone: session.agentPhone,
+        questionIndex: answered,
+        question: answered === null ? null : questions[answered],
+        answer: isNonEmptyString(caption) ? caption : '',
+        media: { type: mediaType, id: mediaId },
+        status: 'open',
+        createdAt: now().toISOString(),
+      });
+      return { saved: `${trialId}:${seq}` };
     },
 
     /**
