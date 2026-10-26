@@ -207,7 +207,8 @@ Outside the base: billing, employees and commissions, lead import and campaign s
 | WHATSAPP_PHONE_NUMBER_ID | Sending number | Per bot |
 | WHATSAPP_APP_SECRET | Signature check | Per bot |
 | WHATSAPP_VERIFY_TOKEN | Webhook registration | Per bot |
-| Firestore project and credentials | Storage | Variable names set in step 0 (TO CONFIRM) |
+| AI_MODEL | Claude model string | Required |
+| FIRESTORE_PROJECT_ID | Storage | Credentials from the runtime's Google service account |
 | ADMIN_TOKEN | Admin routes | Sent in header (proposed) |
 | SCHEDULED_JOB_TOKEN | Scheduled job routes | Sent in header (proposed) |
 | SENDGRID_API_KEY, SENDGRID_FROM_EMAIL, NOTIFY_EMAIL | Email | Used by B10, step 2. All three or none |

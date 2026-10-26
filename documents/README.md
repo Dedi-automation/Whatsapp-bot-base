@@ -1,6 +1,6 @@
 # Handoff: WhatsApp bot base (whatsapp-bot-base)
 
-Status: documents only. No code exists yet. Approval from the project owner is pending on the open items in decisions.md.
+Status: base 1.0.0 (stage 3). The code is in `src/`, usage in the root README.md, changes in CHANGELOG.md. Open items are in decisions.md.
 
 ## Read order for the new chat
 

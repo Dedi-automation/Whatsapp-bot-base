@@ -1,11 +1,14 @@
 {
   "name": "whatsapp-bot-base",
-  "version": "0.0.0",
+  "version": "1.0.0",
   "private": true,
   "description": "Shared base for WhatsApp bots. Template, not a deployed product.",
   "main": "src/index.js",
+  "files": [
+    "src/"
+  ],
   "engines": {
-    "node": ">=18"
+    "node": ">=22"
   },
   "scripts": {
     "test": "node --test \"test/**/*.test.js\"",
