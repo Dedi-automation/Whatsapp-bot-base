@@ -8,6 +8,10 @@
     "node": ">=18"
   },
   "scripts": {
-   "test": "node --test \"test/**/*.test.js\""
+    "test": "node --test \"test/**/*.test.js\"",
+    "test:firestore": "node --test test/storage.test.js"
+  },
+  "dependencies": {
+    "@google-cloud/firestore": "^8.7.1"
   }
 }
