@@ -95,3 +95,16 @@
 - Merged into main at c907c5e (merge commit, by Dedi). `npm test` on main after merge, no emulator: 148 tests, 118 pass, 20 fail (branch B stubs), 8 skipped (Firestore emulator cases), 2 todo. `test/health.test.js` + `test/test-mode.test.js`: 42 pass, 0 fail. Branch E dry run on main: pass.
 - Rollback: revert merge commit c907c5e (`git revert -m 1 c907c5e`); it touches only branch E's four files.
 - Next: branch B (WhatsApp and entry, PR #1) rebases on main and merges. Then step 2 integration.
+## 2026-10-26 - step 1, branch B (WhatsApp and entry) - branch-b/whatsapp, PR #1
+
+- Scope: B1 config `src/config.js`, B2 security `src/security.js`, B5 WhatsApp client `src/whatsapp.js`, B7 conversation engine `src/conversation.js`, HTTP entry `src/server.js` and `src/index.js` (`createBot`), their tests (`test/server.test.js` new), dry run script `scripts/dry-run-branch-b.js`, and `documents/decisions.md` items 21 to 37 (all step 1 decisions). Branch head 57b92fa on main e608b0f.
+- Findings closed: F-14 (B1), F-04 for token handling (B2 and job routes), F-20 (B5), F-26 (no /test-sheet route), F-27 (B7, one record per message).
+- Tests: T-01, T-02, T-03, T-06 (engine side), T-11, T-13, T-16, T-17. Own files: 57 tests (config 7, security 11, whatsapp 10, conversation 18, server 11), all pass.
+- Contract additions: `WhatsAppClient.downloadMedia`, `IncomingMessage.media`, `Config.healthCheck.alertPhone` (HEALTH_CHECK_ALERT_PHONE), engine deps `acceptedMediaTypes`, `mediaReceivedReplyText`, `mediaRejectedReplyText`, `mediaTypeLabels`, outcomes `media_received` and `media_rejected`.
+- Decided by Dedi (2026-10-26): the bot thanks the customer first, then records the handoff; the HTTP server and webhook are built in step 1; the duplicate check runs before the message is saved; each bot sets its accepted media types, and a non-accepted format gets a reply naming the accepted formats.
+- Branch dry run (HTTP on a local port, real WhatsApp and AI clients with recording fetch, real send window, in-memory storage; nothing sent): text reply, duplicate, voice note, accepted ID photo, rejected video, forged signature (401), handoff, Friday outside the window, job token in URL (401) and in header (200); pass. 5 messages would have been sent. Full test run history (11 runs) is in the PR #1 body. T-09 full DRY RUN deferred to step 2.
+- Merged into main at 8251943 (merge commit, by Dedi). `npm test` on main after merge, no emulator: 185 tests, 175 pass, 0 fail, 8 skipped (Firestore emulator cases), 2 todo (T-09, T-10 in conversation.test.js, switched on in step 2). Branch B dry run on main: pass, same output.
+- Rollback: revert merge commit 8251943 (`git revert -m 1 8251943`); it touches only branch B's files and decisions.md.
+- Decided by Dedi (2026-10-26): B10 (email) and B11 (admin dashboard) move to step 2, rebuilt from MyDoctor logic with their fixes. decisions.md item 38; spec.md sections 8, 10 and 11 updated.
+- Step 1 status: all five branches (A, B, C, D, E) are on main. Remaining before step 2: one full `npm test` with the Firestore emulator on Dedi's machine (decisions.md item 23).
+- Next: step 2 integration. B7 routes test-mode trials to `testMode.handleMedia` and `testMode.handleAnswer` (branch E note).

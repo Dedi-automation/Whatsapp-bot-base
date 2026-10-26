@@ -142,11 +142,11 @@ Rule for the base: the prompt is rendered from a closed list of fields. A missin
 
 ## 8. Build order
 
-Step 0 - Stubs and contracts (one session, before any branch starts). For each module B1, B2, B3, B4, B5, B6, B7, B8, B9, B12, B13 (B10 and B11 later): write the interface (types, inputs, outputs, errors), a fake implementation (B3 uses an in-memory store), and failing tests that describe the behavior. Merge step 0.
+Step 0 - Stubs and contracts (one session, before any branch starts). For each module B1, B2, B3, B4, B5, B6, B7, B8, B9, B12, B13 (B10 and B11 in step 2): write the interface (types, inputs, outputs, errors), a fake implementation (B3 uses an in-memory store), and failing tests that describe the behavior. Merge step 0.
 
 Step 1 - Parallel branches (section 10). Each branch works against the stubs and fakes, so it does not wait for other branches. Each module closes the findings it owns (section 5) and turns its failing tests green.
 
-Step 2 - Integration. Replace fakes with real Firestore and WhatsApp test setup. Run T-01 to T-17 and the DRY RUN (T-09).
+Step 2 - Integration. Replace fakes with real Firestore and WhatsApp test setup. Build B10 (email) and B11 (admin dashboard) from the MyDoctor logic with their fixes (F-01, F-04, F-12, F-21, F-22; decisions.md item 38). Run T-01 to T-17 and the DRY RUN (T-09).
 
 Step 3 - Base 1.0.0 tag. Only when all tests pass and the log is recorded.
 
@@ -176,7 +176,7 @@ Step 0 is the only sequential part. After it is merged, five branches run at the
 
 Integration gate: after all branches merge, one run with one message per branch, then T-01 to T-17.
 
-PROPOSED: B10 (email) and B11 (admin dashboard) are postponed to a later phase.
+DECIDED (2026-10-26): B10 (email) and B11 (admin dashboard) are not part of step 1. They are built in step 2 (decisions.md item 38).
 
 ## 11. Base modules (contracts)
 
@@ -191,8 +191,8 @@ PROPOSED: B10 (email) and B11 (admin dashboard) are postponed to a later phase.
 | B7 Conversation engine | Receive message, window check, save transcript, handoff to agent | webhook.js, leads.js | Rewrite (F-11, F-13, F-27) |
 | B8 Send window | Sunday to Thursday, 09:00 to 17:50 inclusive, Israel time, holidays. Nothing is sent after 17:50 on any day | schedule-window.js | Keep |
 | B9 Scheduled jobs | Reminders and digest with locking and duplicate-run protection | New | Fixes F-06, F-15, F-16 |
-| B10 Notifications | Email to agent | email.js | Escape all fields (F-22). Postponed |
-| B11 Admin dashboard | View and edit agents | admin.js | Rewrite (F-01, F-04, F-21). Postponed |
+| B10 Notifications | Email to agent | email.js | Escape all fields (F-22). Step 2 |
+| B11 Admin dashboard | View and edit agents | admin.js | Rewrite (F-01, F-04, F-12, F-21). Step 2 |
 | B12 Health check | Check services and storage | health-check.js | Numbers from config (F-17) |
 | B13 Archive | Move old records to archive (optional) | archive.js | Config for check list and start date (F-17) |
 
@@ -210,7 +210,7 @@ Outside the base: billing, employees and commissions, lead import and campaign s
 | Firestore project and credentials | Storage | Variable names set in step 0 (TO CONFIRM) |
 | ADMIN_TOKEN | Admin routes | Sent in header (proposed) |
 | SCHEDULED_JOB_TOKEN | Scheduled job routes | Sent in header (proposed) |
-| SENDGRID_API_KEY, SENDGRID_FROM_EMAIL, NOTIFY_EMAIL | Email | Used by B10, postponed |
+| SENDGRID_API_KEY, SENDGRID_FROM_EMAIL, NOTIFY_EMAIL | Email | Used by B10, step 2 |
 | APP_BASE_URL | Links in messages | |
 | PORT | Server port | |
 

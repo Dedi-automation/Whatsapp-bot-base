@@ -44,11 +44,11 @@ Decided 2026-10-26 (Dedi's answers during step 1):
 35. The health check sends a real WhatsApp message on every run. The recipient is set in config: the owner's test number now, the clerk's or client's number in production. A copy of every failed check goes to the owner (`HEALTH_CHECK_ALERT_PHONE`).
 36. Health check messages and failure alerts to the owner are sent at any day and hour, outside the send window. At go-live, who receives alerts and when is set per client.
 37. Every branch runs its tests and a dry run before commit and merge, and records each test run (date, commit, result, rollback point).
+38. B10 (email to the agent) and B11 (admin dashboard, the agent's lead board) move to stage 2. They are rebuilt from the MyDoctor logic, not copied: email.js keeps its logic and escapes every field (F-22); the admin dashboard is rewritten (F-01, F-04, F-12, F-21). The agent dashboard that shows media and test-mode notes (items 32, 34) is part of B11.
 
 ## Proposed, not yet approved
 
 - Source of truth for documents: git. Claude Docs pages are read-only views refreshed from git.
-- Postpone B10 (email) and B11 (admin dashboard) to a later phase.
 - Admin and job tokens sent in headers, not in URLs.
 - Use the existing D&D Meta business account for WhatsApp testing.
 
