@@ -65,3 +65,16 @@
 - Merged into main at 7bd5f41 (merge commit, by Dedi). `npm test` on main after merge: 90 tests, 52 pass, 36 fail (other branches' stubs), 2 todo.
 - Rollback: revert merge commit 7bd5f41 (`git revert -m 1 7bd5f41`); it touches only branch D's six files.
 - Next: branch A (data) rebases on main and merges.
+## 2026-10-26 - step 1, branch A (Data) - branch-a/data, PR #4
+
+- Scope: B4 schema `src/schema.js`, B3 Firestore storage `src/storage.js`, `test/schema.test.js`, `test/storage.test.js`, `package.json` + lockfile (`@google-cloud/firestore@^8.7.1`; 9.x needs Node 22, the repo allows Node >= 18; new script `test:firestore`). Branch commits f431721, 91a037c.
+- Findings closed: F-07 (header check at startup: leading/trailing spaces, empty and duplicate headers fail; every missing required header is listed), F-12 (fields resolved by ID via `headerFor`, never by position; callers must use it).
+- Storage: one Firestore project per `projectId` (T-05), atomic `createIfAbsent` via Firestore `create()`, every backend error is a `StorageError` naming the path but never field values, `/` in a collection or record ID is rejected.
+- Tests: T-05, T-11, T-12. Own files: 38 tests (18 step-0 + 20 added). Firestore cases run against the Firestore emulator; without `FIRESTORE_EMULATOR_HOST` they are reported as skipped ("not run"), never as passed. `npm run test:firestore` refuses to run without the variable.
+- Emulator run on Dedi's machine (Windows 10, Node v26.7.0, gcloud 590.0.1, Java 21, emulator 127.0.0.1:8080), head 91a037c: `npm run test:firestore` 26/26 pass, 0 skipped; `npm test` 109 tests, 84 pass, 23 fail (branch B and E stubs), 0 skipped, 2 todo.
+- Bug found during the runs and fixed in 91a037c: with the variable set but the emulator stopped, a file-level cleanup hook failed every test in `storage.test.js` (58 pass, 48 fail). Cleanup is now its own ordered test with a "not reachable ... Is it running?" message, and only the Firestore cases fail.
+- Branch dry run (no network): real Firestore client builds, doc path `leads/c1`, an invalid path is rejected before any network call. T-09 full DRY RUN deferred to step 2.
+- Decided by Dedi (2026-10-26): env var names `FIRESTORE_PROJECT_ID`, `FIRESTORE_EMULATOR_HOST`, `GOOGLE_APPLICATION_CREDENTIALS` (closes the decisions.md Open item on Firestore variable names); one Firestore project per bot (one agent may run several bots; similar bots run for different agents); without the emulator the Firestore tests are "not run", and they must run with the emulator before merge.
+- Merged into main at 015346e (merge commit, by Dedi). `npm test` on main after merge, no emulator: 109 tests, 76 pass, 23 fail (branch B and E stubs), 8 skipped (Firestore emulator cases), 2 todo. `test/schema.test.js` + `test/storage.test.js`: 30 pass, 0 fail, 8 skipped.
+- Rollback: revert merge commit 015346e (`git revert -m 1 015346e`); it touches only branch A's files, package.json and package-lock.json.
+- Next: branch E (testing) rebases on main and merges, then branch B.
