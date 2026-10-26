@@ -129,3 +129,112 @@ test('missing dependencies are reported, never thrown', async () => {
   assert.equal(report.checks.whatsapp.ok, false);
   assert.equal(report.checks.ai.ok, false);
 });
+
+// Every run sends a real result message; a failure also sends a copy to the alert
+// phone (Dedi, 2026-10-26).
+
+const brokenStorage = () => ({
+  get: async () => { throw new Error('down'); },
+  set: async () => { throw new Error('down'); },
+  createIfAbsent: async () => { throw new Error('down'); },
+  delete: async () => { throw new Error('down'); },
+  list: async () => { throw new Error('down'); },
+});
+
+test('a healthy run sends one OK message to the health-check phone and no alert', async () => {
+  const whatsapp = createFakeWhatsAppClient();
+  const report = await checkHealth({
+    storage: createMemoryStorage({ projectId: 'test-a' }),
+    whatsapp,
+    ai: createFakeAiClient(),
+    config: { healthCheck: { phone: '972511111111', alertPhone: '972522222222' } },
+    now: () => new Date('2026-10-25T10:00:00Z'),
+  });
+  assert.equal(report.alert, null);
+  assert.deepEqual(whatsapp.sent.map((m) => [m.to, m.text]), [['972511111111', 'Health check OK 2026-10-25T10:00:00.000Z']]);
+});
+
+test('a failed check is in the result message and a copy goes to the alert phone', async () => {
+  const whatsapp = createFakeWhatsAppClient();
+  const report = await checkHealth({
+    storage: brokenStorage(),
+    whatsapp,
+    ai: createFakeAiClient(),
+    config: { healthCheck: { phone: '972511111111', alertPhone: '972522222222' } },
+  });
+  assert.equal(report.ok, false);
+  assert.deepEqual(whatsapp.sent.map((m) => m.to), ['972511111111', '972522222222']);
+  for (const m of whatsapp.sent) assert.match(m.text, /FAILED.*storage: down/);
+  assert.equal(report.alert.sent, true);
+  assert.equal(report.alert.to, '972522222222');
+});
+
+test('when the result message itself fails, the alert phone still gets the problem', async () => {
+  const { WhatsAppError } = require('../src/errors');
+  const whatsapp = createFakeWhatsAppClient();
+  whatsapp.failNextWith(new WhatsAppError('blocked', { status: 400, code: 133010 }));
+  const report = await checkHealth({
+    storage: createMemoryStorage({ projectId: 'test-a' }),
+    whatsapp,
+    ai: createFakeAiClient(),
+    config: { healthCheck: { phone: '972511111111', alertPhone: '972522222222' } },
+  });
+  assert.equal(report.checks.whatsapp.ok, false);
+  assert.equal(report.alert.sent, true);
+  assert.equal(whatsapp.sent.length, 1);
+  assert.equal(whatsapp.sent[0].to, '972522222222');
+  assert.match(whatsapp.sent[0].text, /whatsapp: blocked/);
+});
+
+test('a missing health-check phone still alerts the alert phone', async () => {
+  const whatsapp = createFakeWhatsAppClient();
+  const report = await checkHealth({
+    storage: createMemoryStorage({ projectId: 'test-a' }),
+    whatsapp,
+    ai: createFakeAiClient(),
+    config: { healthCheck: { phone: undefined, alertPhone: '972522222222' } },
+  });
+  assert.equal(report.alert.sent, true);
+  assert.match(whatsapp.sent[0].text, /HEALTH_CHECK_PHONE is not set/);
+});
+
+test('when the alert phone is the health-check phone, the problem is sent once', async () => {
+  const whatsapp = createFakeWhatsAppClient();
+  const report = await checkHealth({
+    storage: brokenStorage(),
+    whatsapp,
+    ai: createFakeAiClient(),
+    config: { healthCheck: { phone: '972511111111', alertPhone: '972511111111' } },
+  });
+  assert.equal(whatsapp.sent.length, 1);
+  assert.equal(report.alert.sent, false);
+  assert.match(report.alert.detail, /already sent/);
+});
+
+test('a failure with no alert phone configured is reported in the alert field', async () => {
+  const report = await checkHealth({
+    storage: brokenStorage(),
+    whatsapp: createFakeWhatsAppClient(),
+    ai: createFakeAiClient(),
+    config,
+  });
+  assert.equal(report.alert.sent, false);
+  assert.match(report.alert.detail, /HEALTH_CHECK_ALERT_PHONE/);
+});
+
+test('a failing alert send is reported, never thrown', async () => {
+  const whatsapp = {
+    sendText: async () => { throw new Error('network down'); },
+    sendTemplate: async () => { throw new Error('network down'); },
+    parseIncoming: () => [],
+  };
+  const report = await checkHealth({
+    storage: createMemoryStorage({ projectId: 'test-a' }),
+    whatsapp,
+    ai: createFakeAiClient(),
+    config: { healthCheck: { phone: '972511111111', alertPhone: '972522222222' } },
+  });
+  assert.equal(report.checks.whatsapp.ok, false);
+  assert.equal(report.alert.sent, false);
+  assert.match(report.alert.detail, /network down/);
+});

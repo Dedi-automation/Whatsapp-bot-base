@@ -196,11 +196,23 @@ test('DRY RUN (Branch E): health check, full test-mode cycle and recommendations
     storage,
     whatsapp,
     ai: createFakeAiClient(),
-    config: { healthCheck: { phone: '972500000000' } },
+    config: { healthCheck: { phone: '972500000000', alertPhone: '972500000009' } },
     now: () => new Date('2026-10-25T10:00:00Z'),
   });
   t.diagnostic(`health: ${JSON.stringify(report)}`);
   assert.equal(report.ok, true);
+
+  // Failure path: a broken storage, the result and an alert copy would be sent.
+  const failWhatsapp = createFakeWhatsAppClient();
+  const failReport = await checkHealth({
+    storage: { get: async () => { throw new Error('down'); }, set: async () => { throw new Error('down'); }, createIfAbsent: async () => false, delete: async () => {}, list: async () => [] },
+    whatsapp: failWhatsapp,
+    ai: createFakeAiClient(),
+    config: { healthCheck: { phone: '972500000000', alertPhone: '972500000009' } },
+    now: () => new Date('2026-10-25T10:00:00Z'),
+  });
+  for (const m of failWhatsapp.sent) t.diagnostic(`health failure, would send to ${m.to}: ${m.text}`);
+  assert.equal(failReport.alert.sent, true);
 
   const mode = createTestMode({
     storage,
