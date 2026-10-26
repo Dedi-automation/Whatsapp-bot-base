@@ -121,3 +121,22 @@ test('createBot: POST /jobs/send-daily-digest sends the summary once per day (jo
   assert.equal(email.sent.length, 1);
   assert.match(email.sent[0].subject, /סיכום יומי/);
 });
+
+test('createBot: on the 1st the digest job also sends the previous month summary', async (t) => {
+  const email = createFakeEmailClient();
+  const app = await startBot({
+    env: env({ SENDGRID_API_KEY: 'k', SENDGRID_FROM_EMAIL: 'bot@example.com', NOTIFY_EMAIL: 'agent@example.com' }),
+    ai: createFakeAiClient([]),
+    email,
+    monthlyNote: 'החשבונית החודשית נשלחת בנפרד מ-Grow.',
+    now: () => new Date('2026-11-01T16:15:00Z'),
+  });
+  t.after(app.close);
+  const res = await fetch(`${app.base}/jobs/send-daily-digest`, { method: 'POST', headers: { Authorization: 'Bearer value-of-SCHEDULED_JOB_TOKEN' } }).then((r) => r.json());
+  assert.equal(res.result.status, 'ran');
+  assert.equal(res.result.week, null, 'Sunday: no week');
+  assert.equal(res.result.monthly.from, '2026-10-01');
+  assert.deepEqual(res.result.monthly.channels, [{ channel: 'email', ok: true }]);
+  assert.deepEqual(email.sent.map((m) => m.subject.split(' - ')[0]), ['סיכום יומי', 'סיכום חודשי']);
+  assert.match(email.sent[1].text, /בנפרד מ-Grow/);
+});

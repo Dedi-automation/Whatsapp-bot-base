@@ -221,7 +221,7 @@ Not in the base: Grow variables, Sheets variables, demo variables, outbound vari
 
 - GET and POST /whatsapp-webhook: incoming messages. Verify token and signature.
 - GET /health: liveness check.
-- POST /jobs/send-reminders, /jobs/send-daily-digest, /jobs/archive-leads: scheduled jobs. Job token in header. The base provides send-daily-digest (daily summary to the agent, scheduled at 18:15, decisions.md item 43).
+- POST /jobs/send-reminders, /jobs/send-daily-digest, /jobs/archive-leads: scheduled jobs. Job token in header. The base provides send-daily-digest (daily summary to the agent, scheduled at 18:15, decisions.md item 43; on Thursday it adds the week, on the 1st a separate summary of the previous month follows, decisions.md item 44).
 - /admin/...: admin dashboard (postponed). Admin token in header.
 - Not in the base: /test-sheet (F-26), /billing/*, /demo-intake.
 

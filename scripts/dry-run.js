@@ -106,6 +106,7 @@ async function runDryRun(options = {}) {
     email,
     now,
     botName: 'בוט בדיקה',
+    monthlyNote: 'החשבונית החודשית נשלחת בנפרד מ-Grow.',
     systemPrompt: 'Dry run system prompt.',
     tool: {
       name: 'send_whatsapp_reply',
@@ -261,6 +262,21 @@ async function runDryRun(options = {}) {
     const digestSent = sentSince(mark);
     check('daily summary at 18:15: email + WhatsApp to the agent, once (T-08)', d1.result.status === 'ran' && d2.result.status === 'already_done' && digestSent.length === 2 && digestSent.some((s) => s.channel === 'email') && digestSent.some((s) => s.to === AGENT_PHONE));
     check('daily summary counts the day', d1.result.counts.handoffsToday === 1 && d1.result.counts.waiting === 1);
+
+    // 12b. Thursday: the daily message also sums the week (Friday to Thursday)
+    clock = new Date('2026-10-29T16:15:00Z');
+    mark = wouldSend.length;
+    const thu = await digest();
+    const thuSent = sentSince(mark);
+    check('Thursday summary holds the day and the week (Monday counts included)', thu.result.week && thu.result.week.from === '2026-10-23' && thu.result.week.totals.handoffsToday === 1 && thuSent.length === 2 && thuSent.every((s) => (s.plain || s.text).includes('סיכום שבועי')));
+
+    // 12c. The 1st: a separate email for the previous month (the invoice comes from Grow by itself)
+    clock = new Date('2026-11-01T16:15:00Z');
+    mark = wouldSend.length;
+    const eom = await digest();
+    const eomSent = sentSince(mark);
+    const monthlyMail = eomSent.find((s) => s.channel === 'email' && s.text.includes('סיכום חודשי'));
+    check('1st of the month: previous month summary by email, with the Grow invoice note', eom.result.monthly && eom.result.monthly.totals.handoffsToday === 1 && monthlyMail && monthlyMail.plain.includes('Grow') && eom.result.monthly.from === '2026-10-01' && eom.result.monthly.daysRecorded === 2);
     clock = new Date('2026-10-26T11:00:00Z');
 
     // 13. Health check: real result message (recorded), no alert when healthy

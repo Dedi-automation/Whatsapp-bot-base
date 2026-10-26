@@ -51,7 +51,7 @@ const REQUIRED_ENV = Object.freeze([
  * @property {{phone: string, events: string[], template: {name: string, language: string} | null} | null} agentWhatsApp
  *   WhatsApp notifications to the agent, optional (Dedi, 2026-10-26: email by default,
  *   WhatsApp when asked). AGENT_WHATSAPP_PHONE turns it on. AGENT_WHATSAPP_EVENTS is a
- *   comma list of handoff, daily_summary, recommendation (default: all of them).
+ *   comma list of handoff, daily_summary, monthly_summary, recommendation (default: all of them).
  *   AGENT_WHATSAPP_TEMPLATE (+ AGENT_WHATSAPP_TEMPLATE_LANGUAGE, default 'he') sends a
  *   Meta-approved template, needed outside a 24-hour conversation. Events or template
  *   without a phone, or an unknown event: ConfigError.

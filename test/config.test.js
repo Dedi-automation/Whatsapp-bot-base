@@ -84,7 +84,7 @@ test('agent WhatsApp: off without AGENT_WHATSAPP_PHONE', () => {
 
 test('agent WhatsApp: phone alone means all events, no template', () => {
   const c = loadConfig({ ...fullEnv(), AGENT_WHATSAPP_PHONE: '972500000077' }).agentWhatsApp;
-  assert.deepEqual([...c.events], ['handoff', 'daily_summary', 'recommendation']);
+  assert.deepEqual([...c.events], ['handoff', 'daily_summary', 'monthly_summary', 'recommendation']);
   assert.equal(c.template, null);
 });
 

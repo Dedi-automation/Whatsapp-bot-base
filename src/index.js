@@ -13,7 +13,8 @@
 // Stage 2 wiring: the admin dashboard (B11) is mounted at /admin. Notifications
 // (src/notify.js) go by email by default and by WhatsApp to the agent for the events
 // the bot lists: a handoff, the daily summary (POST /jobs/send-daily-digest, called
-// by the scheduler at 18:15), and each prompt recommendation from a closed test-mode
+// by the scheduler at 18:15; on Thursday it adds the week, on the 1st a summary of
+// the previous month follows; the invoice comes from Grow in its own email), and each prompt recommendation from a closed test-mode
 // trial. Links point to the dashboard and carry no token.
 
 const { loadConfig } = require('./config');
@@ -28,7 +29,7 @@ const { createAdmin } = require('./admin');
 const { createTestMode } = require('./test-mode');
 const { createEmailClient, recommendationEmail } = require('./email');
 const { createNotifier } = require('./notify');
-const { buildDailySummary } = require('./daily-summary');
+const { buildDigest } = require('./daily-summary');
 const { createJobRunner } = require('./jobs');
 
 const DEFAULT_LEAD_STATUSES = Object.freeze(['new', 'in_progress', 'handoff', 'closed']);
@@ -43,6 +44,7 @@ const DEFAULT_LEAD_STATUSES = Object.freeze(['new', 'in_progress', 'handoff', 'c
  *   mediaRejectedReplyText?: string,
  *   mediaTypeLabels?: Record<string, string>,
  *   holidays?: Iterable<string>,
+ *   monthlyNote?: string,
  *   jobs?: Record<string, () => Promise<unknown>>,
  *   botName?: string,
  *   leadStatuses?: string[],
@@ -66,6 +68,7 @@ const DEFAULT_LEAD_STATUSES = Object.freeze(['new', 'in_progress', 'handoff', 'c
  *   leadStatuses: statuses the agent can set on the dashboard (per bot). Default: new,
  *   in_progress, handoff, closed. schema and leadFields: dashboard columns by field ID (F-12).
  *   testMode: tester phones, the end keyword and the 4 to 6 feedback questions (per bot).
+ *   monthlyNote: one line for the monthly summary, for example "the invoice is sent separately by Grow".
  * @returns {{config: import('./config').Config, server: import('node:http').Server, testMode: object | null, listen: () => Promise<number>}}
  *   listen resolves with the port in use.
  */
@@ -105,13 +108,24 @@ function createBot(options) {
   const jobRunner = createJobRunner({ storage, now });
   async function sendDailyDigest() {
     const day = wallClock(now(), 'Asia/Jerusalem').date;
-    let summary = null;
+    let digest = null;
     let delivered = null;
+    let monthly = null;
     const run = await jobRunner.runOnce('send-daily-digest', day, async () => {
-      summary = await buildDailySummary({ storage, now, botName, dashboardUrl: config.appBaseUrl });
-      delivered = await notifier.send('daily_summary', { subject: summary.subject, text: summary.text });
+      digest = await buildDigest({ storage, now, botName, dashboardUrl: config.appBaseUrl, monthlyNote: options.monthlyNote });
+      delivered = await notifier.send('daily_summary', { subject: digest.daily.subject, text: digest.daily.text });
+      if (digest.monthly) monthly = await notifier.send('monthly_summary', { subject: digest.monthly.subject, text: digest.monthly.text });
     });
-    return { status: run.status, counts: summary && summary.counts, channels: delivered && delivered.channels };
+    if (!digest) return { status: run.status };
+    return {
+      status: run.status,
+      counts: digest.daily.counts,
+      channels: delivered.channels,
+      week: digest.week ? { from: digest.week.from, to: digest.week.to, totals: digest.week.totals, daysRecorded: digest.week.daysRecorded } : null,
+      monthly: digest.monthly
+        ? { from: digest.monthly.from, to: digest.monthly.to, totals: digest.monthly.totals, daysRecorded: digest.monthly.daysRecorded, channels: monthly.channels }
+        : null,
+    };
   }
 
   const testMode = options.testMode

@@ -15,11 +15,11 @@ const msg = { subject: 'Handoff', text: 'Lead 1 wants an agent\nreason: price' }
 test('email only: every event goes to the configured address', async () => {
   const email = createFakeEmailClient();
   const n = createNotifier({ email, emailTo: 'agent@example.com', log: quiet });
-  for (const event of ['handoff', 'daily_summary', 'recommendation']) {
+  for (const event of ['handoff', 'daily_summary', 'monthly_summary', 'recommendation']) {
     const r = await n.send(event, msg);
     assert.deepEqual(r.channels, [{ channel: 'email', ok: true }]);
   }
-  assert.equal(email.sent.length, 3);
+  assert.equal(email.sent.length, 4);
   assert.equal(email.sent[0].to, 'agent@example.com');
 });
 
