@@ -30,6 +30,9 @@ const engine = createConversationEngine({
   isWithinSendWindow: () => within,
   now: () => new Date('2026-10-26T09:00:00Z'),
   unsupportedReplyText: 'Sorry, I can only read text messages.',
+  // Example bot that needs an ID photo: images and documents are accepted.
+  acceptedMediaTypes: ['image', 'document'],
+  mediaReceivedReplyText: 'תודה, קיבלנו את הקובץ',
   systemPrompt: 'dry-run system prompt',
   tool: { name: 'send_whatsapp_reply', inputSchema: { type: 'object', required: ['text'], properties: { text: { type: 'string' }, handoff: { type: 'boolean' } } } },
 });
@@ -65,7 +68,8 @@ async function deliver(label, messages, { badSig = false } = {}) {
   await deliver('1 text', [{ id: 'w1', from, type: 'text', text: { body: 'היי' } }]);
   await deliver('2 same id again', [{ id: 'w1', from, type: 'text', text: { body: 'היי' } }]);
   await deliver('3 voice note', [{ id: 'w2', from, type: 'audio' }]);
-  await deliver('3b screenshot', [{ id: 'w2b', from, type: 'image', image: { id: 'media-1', mime_type: 'image/png', caption: 'צילום מסך' } }]);
+  await deliver('3b ID photo (accepted)', [{ id: 'w2b', from, type: 'image', image: { id: 'media-1', mime_type: 'image/jpeg', caption: 'תעודת זהות' } }]);
+  await deliver('3c video (not accepted)', [{ id: 'w2c', from, type: 'video', video: { id: 'media-2', mime_type: 'video/mp4' } }]);
   await deliver('4 forged signature', [{ id: 'w3', from, type: 'text', text: { body: 'x' } }], { badSig: true });
   await deliver('5 handoff', [{ id: 'w4', from, type: 'text', text: { body: 'כמה זה עולה?' } }]);
   within = false;
@@ -77,7 +81,7 @@ async function deliver(label, messages, { badSig = false } = {}) {
   console.log(`job token in URL: HTTP ${inUrl.status}; in header: HTTP ${inHeader.status}; job runs: ${jobRuns}`);
   console.log(`health: HTTP ${(await fetch(`${base}/health`)).status}`);
   const shot = (await storage.list('messages')).find((r) => r.data.messageId === 'w2b');
-  console.log('screenshot stored as:', JSON.stringify(shot.data.media));
+  console.log('ID photo stored as:', JSON.stringify(shot.data.media));
   const conv = await storage.get('conversations', from);
   console.log('conversation:', JSON.stringify({ messageCount: conv.messageCount, agent_action_required: conv.agent_action_required, handoff_reason: conv.handoff_reason }));
   console.log('would have sent:');

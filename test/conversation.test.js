@@ -12,7 +12,7 @@ const { createFakeAiClient } = require('../src/fakes/ai-fake');
 
 const TOOL = { name: 'send_whatsapp_reply', inputSchema: { type: 'object', required: ['text'], properties: { text: { type: 'string' } } } };
 
-function build({ withinWindow = true, aiReplies = [{ text: 'תודה' }] } = {}) {
+function build({ withinWindow = true, aiReplies = [{ text: 'תודה' }], media = {} } = {}) {
   const storage = createMemoryStorage({ projectId: 'test-a' });
   const whatsapp = createFakeWhatsAppClient();
   const ai = createFakeAiClient(aiReplies);
@@ -24,6 +24,7 @@ function build({ withinWindow = true, aiReplies = [{ text: 'תודה' }] } = {})
     isWithinSendWindow: () => withinWindow,
     now: () => new Date('2026-10-25T10:00:00Z'),
     unsupportedReplyText: 'Sorry, I can only read text messages.',
+    ...media,
     systemPrompt: 'system',
     tool: TOOL,
   });
@@ -125,4 +126,49 @@ test('an image is saved in the transcript with its media reference', async () =>
   const outcome = await engine.handleIncoming({ kind: 'unsupported', messageId: 'wamid.img', from: '972500000000', mediaType: 'image', text: null, media });
   const saved = await storage.get('messages', `${outcome.conversationId}:1`);
   assert.deepEqual(saved.media, media);
+});
+
+const idPhoto = (type = 'image', id = 'media-id-1') => ({
+  kind: 'unsupported', messageId: `wamid.${type}.${id}`, from: '972500000000', mediaType: type, text: null,
+  media: { id, mimeType: 'image/jpeg', caption: null },
+});
+const ACCEPT_ID_PHOTO = { acceptedMediaTypes: ['image', 'document'], mediaReceivedReplyText: 'Thanks, we received your file.' };
+
+test('a media type the bot accepts is saved and gets the bot acknowledgement', async () => {
+  const { engine, whatsapp, storage, ai } = build({ media: ACCEPT_ID_PHOTO });
+  const outcome = await engine.handleIncoming(idPhoto('image'));
+  assert.equal(outcome.status, 'media_received');
+  assert.equal(whatsapp.sent[0].text, 'Thanks, we received your file.');
+  assert.equal((await storage.get('messages', `${outcome.conversationId}:1`)).media.id, 'media-id-1');
+  assert.equal(ai.calls.length, 0);
+});
+
+test('a media type the bot does not accept gets the fallback reply, and is still saved', async () => {
+  const { engine, whatsapp, storage } = build({ media: ACCEPT_ID_PHOTO });
+  const outcome = await engine.handleIncoming(idPhoto('video'));
+  assert.equal(outcome.status, 'unsupported_reply');
+  assert.equal(whatsapp.sent[0].text, 'Sorry, I can only read text messages.');
+  assert.equal((await storage.get('messages', `${outcome.conversationId}:1`)).media.id, 'media-id-1');
+});
+
+test('by default no media type is accepted', async () => {
+  const { engine } = build();
+  assert.equal((await engine.handleIncoming(idPhoto('image'))).status, 'unsupported_reply');
+});
+
+test('an accepted type without a media ID is not acknowledged as received', async () => {
+  const { engine } = build({ media: ACCEPT_ID_PHOTO });
+  const msg = { kind: 'unsupported', messageId: 'wamid.noid', from: '972500000000', mediaType: 'image', text: null };
+  assert.equal((await engine.handleIncoming(msg)).status, 'unsupported_reply');
+});
+
+test('outside the send window an accepted file is saved and not acknowledged', async () => {
+  const { engine, whatsapp } = build({ withinWindow: false, media: ACCEPT_ID_PHOTO });
+  assert.equal((await engine.handleIncoming(idPhoto('document'))).status, 'outside_window');
+  assert.equal(whatsapp.sent.length, 0);
+});
+
+test('media config is checked at startup: unknown type, or no acknowledgement text', () => {
+  assert.throws(() => build({ media: { acceptedMediaTypes: ['pdf'], mediaReceivedReplyText: 'x' } }), /unknown types: pdf/);
+  assert.throws(() => build({ media: { acceptedMediaTypes: ['image'] } }), /mediaReceivedReplyText is required/);
 });

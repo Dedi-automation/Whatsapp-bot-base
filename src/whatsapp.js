@@ -168,4 +168,4 @@ function textOf(message) {
   }
 }
 
-module.exports = { createWhatsAppClient };
+module.exports = { createWhatsAppClient, MEDIA_TYPES };

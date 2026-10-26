@@ -6,6 +6,8 @@
 // - duplicate message IDs are processed once (T-03, via B2 deduplicator)
 // - the inbound message is saved as a transcript record before any reply (T-11)
 // - non-text messages get a defined reply, not silence (T-17, F-20)
+// - media types the bot accepts (per bot, e.g. an ID photo) are saved and get the
+//   bot's acknowledgement; other types get unsupportedReplyText (owner decision 2026-10-26)
 // - the reply is produced by the AI client and must pass its schema check (T-06)
 // - outside the send window the message is saved and no reply is sent (B8)
 // - handoff: the reply to the customer is sent first, then agent_action_required is set
@@ -20,13 +22,14 @@
 // reply is never sent even if the AI client let it through (T-06).
 
 const { AiResponseError } = require('./errors');
+const { MEDIA_TYPES } = require('./whatsapp');
 
 const MESSAGES = 'messages';
 const CONVERSATIONS = 'conversations';
 
 /**
  * @typedef {Object} Outcome
- * @property {'replied' | 'handoff' | 'duplicate' | 'outside_window' | 'unsupported_reply'} status
+ * @property {'replied' | 'handoff' | 'duplicate' | 'outside_window' | 'unsupported_reply' | 'media_received'} status
  * @property {string} conversationId
  */
 
@@ -39,16 +42,28 @@ const CONVERSATIONS = 'conversations';
  *   isWithinSendWindow: (now: Date) => boolean,
  *   now: () => Date,
  *   unsupportedReplyText: string,
+ *   acceptedMediaTypes?: string[],
+ *   mediaReceivedReplyText?: string,
  *   systemPrompt: string,
  *   tool: import('./ai').ToolDefinition
  * }} deps
+ *   acceptedMediaTypes: media types this bot accepts, from 'image', 'audio', 'video',
+ *   'document', 'sticker'. Default none. mediaReceivedReplyText is required when the
+ *   list is not empty.
  * @returns {{handleIncoming: (message: import('./whatsapp').IncomingMessage) => Promise<Outcome>}}
  */
 function createConversationEngine(deps) {
   const { storage, whatsapp, ai, deduplicator, isWithinSendWindow, now, unsupportedReplyText, systemPrompt, tool } = deps;
+  const { acceptedMediaTypes = [], mediaReceivedReplyText } = deps;
   if (typeof unsupportedReplyText !== 'string' || unsupportedReplyText.trim() === '') {
     throw new TypeError('unsupportedReplyText is required (T-17)');
   }
+  const unknownTypes = acceptedMediaTypes.filter((type) => !MEDIA_TYPES.has(type));
+  if (unknownTypes.length > 0) throw new TypeError(`acceptedMediaTypes has unknown types: ${unknownTypes.join(', ')}`);
+  if (acceptedMediaTypes.length > 0 && (typeof mediaReceivedReplyText !== 'string' || mediaReceivedReplyText.trim() === '')) {
+    throw new TypeError('mediaReceivedReplyText is required when acceptedMediaTypes is set');
+  }
+  const accepted = new Set(acceptedMediaTypes);
 
   /** Append one transcript record. createIfAbsent makes the sequence safe under concurrent writes. */
   async function appendMessage(conversationId, record) {
@@ -110,6 +125,12 @@ function createConversationEngine(deps) {
 
       if (!isWithinSendWindow(receivedAt)) {
         return { status: 'outside_window', conversationId };
+      }
+
+      // Accepted only with a media ID, so the file can be downloaded later.
+      if (message.kind !== 'text' && message.media && accepted.has(message.mediaType)) {
+        await send(conversationId, message.from, mediaReceivedReplyText);
+        return { status: 'media_received', conversationId };
       }
 
       if (message.kind !== 'text') {
