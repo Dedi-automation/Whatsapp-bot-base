@@ -60,6 +60,15 @@ class StorageError extends Error {
   }
 }
 
+class EmailError extends Error {
+  /** @param {string} message @param {{status?: number}} [details] */
+  constructor(message, details = {}) {
+    super(message);
+    this.name = 'EmailError';
+    this.status = details.status;
+  }
+}
+
 module.exports = {
   NotImplementedError,
   ConfigError,
@@ -68,4 +77,5 @@ module.exports = {
   AiResponseError,
   WhatsAppError,
   StorageError,
+  EmailError,
 };
