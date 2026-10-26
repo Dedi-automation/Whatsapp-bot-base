@@ -108,3 +108,13 @@
 - Decided by Dedi (2026-10-26): B10 (email) and B11 (admin dashboard) move to step 2, rebuilt from MyDoctor logic with their fixes. decisions.md item 38; spec.md sections 8, 10 and 11 updated.
 - Step 1 status: all five branches (A, B, C, D, E) are on main. Remaining before step 2: one full `npm test` with the Firestore emulator on Dedi's machine (decisions.md item 23).
 - Next: step 2 integration. B7 routes test-mode trials to `testMode.handleMedia` and `testMode.handleAnswer` (branch E note).
+
+## 2026-10-26 - step 1 closed: full run with the Firestore emulator
+
+- Where: Dedi's machine (Windows 10), clone `C:\work\whatsapp-bot-base` reset to main 0c7bd38. The local clone had diverged; the old state is kept in branch `backup-local-main` and in a stash.
+- Emulator: `gcloud emulators firestore start --host-port=127.0.0.1:8080` (Java 21; gcloud warns that Java 25 will be needed after release 576.0.0).
+- Command: `set FIRESTORE_EMULATOR_HOST=127.0.0.1:8080` then `npm test`, run twice.
+- Result, both runs: 185 tests, 183 pass, 0 fail, 0 skipped, 2 todo (T-09, T-10 in conversation.test.js, switched on in step 2). The Firestore cases (T-05, T-11) ran against the emulator and passed.
+- A first run with the variable set but the emulator not started failed only the Firestore cases with "Firestore emulator not ready", as designed (see branch A).
+- Step 1 is complete: all five branches on main, all tests pass with the emulator (decisions.md item 23).
+- Next: step 2 integration (real Firestore and WhatsApp test setup, B10 and B11, T-01 to T-17, full DRY RUN T-09).
