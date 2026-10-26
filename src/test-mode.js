@@ -13,15 +13,53 @@
 // - Answers are always saved, even outside the window. Notes are never dropped.
 // - Screenshots and other media are saved in the database with the notes and are
 //   shown to the agent in the dashboard (Dedi, 2026-10-26). B11 dashboard is postponed.
+// - Recommendations: after a trial closes, the AI client reads that trial's notes and
+//   transcript and proposes prompt changes. They are saved as pending and only the
+//   project owner approves or rejects them. Nothing here edits a prompt (Dedi, 2026-10-26).
+//   Only one trial's data is sent to the model, not the whole history (narrows F-23).
 //
 // Records:
 // - 'test_sessions' / trialId: {conversationId, agentPhone, status, questionIndex, asked, ...}
 // - 'improvements' / `${trialId}:${seq}`: one record per answer.
+// - 'recommendations' / `${trialId}:${seq}`: one record per proposed prompt change.
 
 const MIN_QUESTIONS = 4;
 const MAX_QUESTIONS = 6;
 const SESSIONS = 'test_sessions';
 const IMPROVEMENTS = 'improvements';
+const RECOMMENDATIONS = 'recommendations';
+const TRANSCRIPT = 'messages';
+
+/** Tool the AI client is forced to use when proposing recommendations. */
+const RECOMMENDATION_TOOL = {
+  name: 'propose_prompt_improvements',
+  inputSchema: {
+    type: 'object',
+    required: ['recommendations'],
+    properties: {
+      recommendations: {
+        type: 'array',
+        items: {
+          type: 'object',
+          required: ['summary', 'change', 'reason'],
+          properties: {
+            summary: { type: 'string' },
+            change: { type: 'string' },
+            reason: { type: 'string' },
+          },
+        },
+      },
+    },
+  },
+};
+
+const DEFAULT_REVIEW_PROMPT = [
+  'You review a trial conversation between an agent and their WhatsApp bot.',
+  'You get the bot prompt, the trial transcript and the agent\'s feedback notes.',
+  'Propose concrete changes to the bot prompt that address the feedback.',
+  'Each recommendation has a short summary, the exact change, and the reason from the feedback.',
+  'Do not invent prices, terms or claims. Propose no change when the feedback needs none.',
+].join(' ');
 
 class TestModeError extends Error {
   constructor(message) {
@@ -57,12 +95,16 @@ const isNonEmptyString = (v) => typeof v === 'string' && v.trim() !== '';
  *   isWithinSendWindow: (now: Date) => boolean,
  *   now: () => Date,
  *   questions: string[],
- *   closingText: string
+ *   closingText: string,
+ *   ai?: import('./ai').AiClient,
+ *   reviewPrompt?: string
  * }} deps
+ *   `ai` is needed only for proposeRecommendations.
  * Errors: TestModeError when questions are not 4 to 6 non-empty strings or closingText is empty.
  */
 function createTestMode(deps) {
-  const { storage, whatsapp, isWithinSendWindow, now, questions, closingText } = deps || {};
+  const { storage, whatsapp, isWithinSendWindow, now, questions, closingText, ai } = deps || {};
+  const reviewPrompt = (deps && deps.reviewPrompt) || DEFAULT_REVIEW_PROMPT;
   if (!storage || !whatsapp || typeof isWithinSendWindow !== 'function' || typeof now !== 'function') {
     throw new TestModeError('storage, whatsapp, isWithinSendWindow and now are required');
   }
@@ -101,12 +143,19 @@ function createTestMode(deps) {
     return last ? { status: 'closed' } : { status: 'question_sent', questionIndex: session.questionIndex };
   };
 
-  // Saves one improvement record. The ID uses the next free sequence number, so two
-  // answers that arrive together never overwrite each other.
-  const saveImprovement = async (trialId, data) => {
+  // Saves one record under the next free sequence number, so two records that
+  // arrive together never overwrite each other.
+  const saveNext = async (collection, trialId, data) => {
     for (let seq = 1; ; seq += 1) {
-      if (await storage.createIfAbsent(IMPROVEMENTS, `${trialId}:${seq}`, data)) return seq;
+      if (await storage.createIfAbsent(collection, `${trialId}:${seq}`, data)) return seq;
     }
+  };
+  const saveImprovement = (trialId, data) => saveNext(IMPROVEMENTS, trialId, data);
+
+  const seqOf = (id) => Number(id.split(':').pop());
+  const listForTrial = async (collection, trialId) => {
+    const all = await storage.list(collection);
+    return all.filter((r) => r.data.trialId === trialId).sort((a, b) => seqOf(a.id) - seqOf(b.id));
   };
 
   return {
@@ -221,12 +270,95 @@ function createTestMode(deps) {
      * @param {string} trialId
      */
     async listImprovements(trialId) {
-      const all = await storage.list(IMPROVEMENTS);
-      return all
-        .filter((r) => r.data.trialId === trialId)
-        .sort((a, b) => Number(a.id.split(':').pop()) - Number(b.id.split(':').pop()));
+      return listForTrial(IMPROVEMENTS, trialId);
+    },
+
+    /**
+     * Asks the AI client for prompt recommendations based on one closed trial: its
+     * feedback notes and its transcript. Each recommendation is saved with status
+     * 'pending_approval'. The prompt itself is never changed here.
+     * @param {{trialId: string, currentPrompt: string}} input
+     * @returns {Promise<Array<{id: string, data: Record<string, unknown>}>>} the saved recommendations
+     * Errors: TestModeError when there is no AI client, the trial is not closed, or the
+     * reply has no recommendations list. AI client errors are not swallowed.
+     */
+    async proposeRecommendations({ trialId, currentPrompt }) {
+      if (!ai || typeof ai.reply !== 'function') throw new TestModeError('an AI client is required for recommendations');
+      if (!isNonEmptyString(currentPrompt)) throw new TestModeError('currentPrompt is required');
+      const session = await loadSession(trialId);
+      if (session.status !== 'closed') throw new TestModeError(`test session ${trialId} is not closed yet`);
+
+      const notes = await listForTrial(IMPROVEMENTS, trialId);
+      const prefix = `${session.conversationId}:`;
+      const transcript = (await storage.list(TRANSCRIPT))
+        .filter((r) => r.id.startsWith(prefix))
+        .sort((a, b) => seqOf(a.id) - seqOf(b.id));
+
+      const content = [
+        'BOT PROMPT:',
+        currentPrompt,
+        '',
+        'TRANSCRIPT:',
+        ...transcript.map((r) => `${r.data.role || r.data.direction || 'message'}: ${r.data.text ?? ''}`),
+        '',
+        'FEEDBACK NOTES:',
+        ...notes.map((n) => `Q: ${n.data.question ?? '(none)'}\nA: ${n.data.answer}${n.data.media ? ` [${n.data.media.type} attached]` : ''}`),
+      ].join('\n');
+
+      const result = await ai.reply({
+        systemPrompt: reviewPrompt,
+        messages: [{ role: 'user', content }],
+        tool: RECOMMENDATION_TOOL,
+      });
+      if (!result || !Array.isArray(result.recommendations)) {
+        throw new TestModeError('AI reply has no recommendations list');
+      }
+
+      const saved = [];
+      for (const rec of result.recommendations) {
+        const data = {
+          trialId,
+          conversationId: session.conversationId,
+          summary: String(rec.summary ?? ''),
+          change: String(rec.change ?? ''),
+          reason: String(rec.reason ?? ''),
+          status: 'pending_approval',
+          createdAt: now().toISOString(),
+          decidedAt: null,
+          decidedBy: null,
+        };
+        const seq = await saveNext(RECOMMENDATIONS, trialId, data);
+        saved.push({ id: `${trialId}:${seq}`, data });
+      }
+      return saved;
+    },
+
+    /**
+     * Records the project owner's decision on one recommendation. This only changes
+     * its status; applying an approved change to the prompt is a manual step.
+     * @param {{id: string, decision: 'approved' | 'rejected', decidedBy: string}} input
+     */
+    async decideRecommendation({ id, decision, decidedBy }) {
+      if (decision !== 'approved' && decision !== 'rejected') {
+        throw new TestModeError("decision must be 'approved' or 'rejected'");
+      }
+      if (!isNonEmptyString(decidedBy)) throw new TestModeError('decidedBy is required');
+      const rec = await storage.get(RECOMMENDATIONS, id);
+      if (!rec) throw new TestModeError(`no recommendation ${id}`);
+      if (rec.status !== 'pending_approval') throw new TestModeError(`recommendation ${id} is already ${rec.status}`);
+      const next = { ...rec, status: decision, decidedAt: now().toISOString(), decidedBy };
+      await storage.set(RECOMMENDATIONS, id, next);
+      return next;
+    },
+
+    /**
+     * All recommendations of one trial, in the order they were saved.
+     * @param {string} trialId
+     */
+    async listRecommendations(trialId) {
+      return listForTrial(RECOMMENDATIONS, trialId);
     },
   };
 }
 
-module.exports = { createTestMode, TestModeError, MIN_QUESTIONS, MAX_QUESTIONS };
+module.exports = { createTestMode, TestModeError, MIN_QUESTIONS, MAX_QUESTIONS, RECOMMENDATION_TOOL };

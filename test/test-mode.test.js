@@ -189,7 +189,7 @@ test('an answer for an unknown trial is an error', async () => {
 // Branch E dry run: the health check and a full test-mode cycle with fakes only.
 // Nothing real is sent; every message that would have been sent is logged as a diagnostic.
 // The full-system DRY RUN (T-09) is step 2.
-test('DRY RUN (Branch E): health check and full test-mode cycle, nothing real sent, messages logged', async (t) => {
+test('DRY RUN (Branch E): health check, full test-mode cycle and recommendations, nothing real sent, messages logged', async (t) => {
   const storage = createMemoryStorage({ projectId: 'dry-run' });
   const whatsapp = createFakeWhatsAppClient();
   const report = await checkHealth({
@@ -205,6 +205,7 @@ test('DRY RUN (Branch E): health check and full test-mode cycle, nothing real se
   const mode = createTestMode({
     storage,
     whatsapp,
+    ai: createFakeAiClient([{ recommendations: [{ summary: 'dry-run recommendation', change: 'dry-run change', reason: 'dry-run note 1' }] }]),
     isWithinSendWindow: () => true,
     now: () => new Date('2026-10-25T10:00:00Z'),
     questions: QUESTIONS,
@@ -219,6 +220,9 @@ test('DRY RUN (Branch E): health check and full test-mode cycle, nothing real se
   for (const m of whatsapp.sent) t.diagnostic(`would send to ${m.to}: ${m.text}`);
   const notes = await mode.listImprovements('trial-1');
   t.diagnostic(`improvement records saved: ${notes.length}`);
+  const recs = await mode.proposeRecommendations({ trialId: 'trial-1', currentPrompt: 'dry-run prompt' });
+  for (const r of recs) t.diagnostic(`recommendation ${r.id} (${r.data.status}): ${r.data.summary}`);
+  assert.equal(recs[0].data.status, 'pending_approval');
 
   assert.equal(outcome.status, 'closed');
   assert.equal(notes.length, QUESTIONS.length);
@@ -253,4 +257,93 @@ test('media without type or ID is an error', async () => {
   const { mode } = build();
   await mode.endTrial(TRIAL);
   await assert.rejects(() => mode.handleMedia({ trialId: 'trial-1', mediaType: 'image', mediaId: '' }), TestModeError);
+});
+
+// Recommendations: feedback and transcript lead to prompt recommendations that the
+// project owner approves. Nothing changes the prompt automatically (Dedi, 2026-10-26).
+
+async function closedTrial({ aiReplies = [] } = {}) {
+  const storage = createMemoryStorage({ projectId: 'test-a' });
+  const whatsapp = createFakeWhatsAppClient();
+  const ai = createFakeAiClient(aiReplies);
+  const mode = createTestMode({
+    storage,
+    whatsapp,
+    ai,
+    isWithinSendWindow: () => true,
+    now: () => new Date('2026-10-25T10:00:00Z'),
+    questions: QUESTIONS.slice(0, 4),
+    closingText: CLOSING,
+  });
+  await storage.set('messages', 'conv-1:1', { role: 'user', text: 'How much is it?' });
+  await storage.set('messages', 'conv-1:2', { role: 'assistant', text: 'It depends.' });
+  await storage.set('messages', 'other:1', { role: 'user', text: 'not this trial' });
+  await mode.endTrial(TRIAL);
+  for (let i = 1; i <= 4; i += 1) await mode.handleAnswer({ trialId: 'trial-1', text: `note ${i}` });
+  return { storage, ai, mode };
+}
+
+const REC = { summary: 'Give the price range', change: 'Add: state the price range when asked', reason: 'note 2' };
+
+test('recommendations are built from the trial notes and transcript and saved as pending approval', async () => {
+  const { ai, mode } = await closedTrial({ aiReplies: [{ recommendations: [REC] }] });
+  const saved = await mode.proposeRecommendations({ trialId: 'trial-1', currentPrompt: 'You are a bot.' });
+
+  assert.equal(saved.length, 1);
+  assert.equal(saved[0].id, 'trial-1:1');
+  assert.equal(saved[0].data.status, 'pending_approval');
+  assert.equal(saved[0].data.change, REC.change);
+
+  const call = ai.calls[0];
+  assert.equal(call.tool.name, 'propose_prompt_improvements');
+  const content = call.messages[0].content;
+  assert.match(content, /You are a bot\./);
+  assert.match(content, /user: How much is it\?/);
+  assert.match(content, /note 4/);
+  assert.doesNotMatch(content, /not this trial/);
+});
+
+test('approving a recommendation changes only its status, never the prompt', async () => {
+  const { mode, storage } = await closedTrial({ aiReplies: [{ recommendations: [REC, { ...REC, summary: 'second' }] }] });
+  await mode.proposeRecommendations({ trialId: 'trial-1', currentPrompt: 'You are a bot.' });
+  const approved = await mode.decideRecommendation({ id: 'trial-1:1', decision: 'approved', decidedBy: 'Dedi' });
+  await mode.decideRecommendation({ id: 'trial-1:2', decision: 'rejected', decidedBy: 'Dedi' });
+
+  assert.equal(approved.status, 'approved');
+  assert.equal(approved.decidedBy, 'Dedi');
+  assert.deepEqual((await mode.listRecommendations('trial-1')).map((r) => r.data.status), ['approved', 'rejected']);
+  await assert.rejects(() => mode.decideRecommendation({ id: 'trial-1:1', decision: 'rejected', decidedBy: 'Dedi' }), /already approved/);
+  assert.deepEqual((await storage.list('prompts')), []);
+});
+
+test('recommendations need a closed trial and an AI client', async () => {
+  const { mode } = build();
+  await mode.endTrial(TRIAL);
+  await assert.rejects(() => mode.proposeRecommendations({ trialId: 'trial-1', currentPrompt: 'p' }), /AI client/);
+
+  const storage = createMemoryStorage({ projectId: 'test-a' });
+  const withAi = createTestMode({
+    storage,
+    whatsapp: createFakeWhatsAppClient(),
+    ai: createFakeAiClient([{ recommendations: [] }]),
+    isWithinSendWindow: () => true,
+    now: () => new Date(),
+    questions: QUESTIONS,
+    closingText: CLOSING,
+  });
+  await withAi.endTrial(TRIAL);
+  await assert.rejects(() => withAi.proposeRecommendations({ trialId: 'trial-1', currentPrompt: 'p' }), /not closed/);
+});
+
+test('an AI reply without a recommendations list is rejected and nothing is saved', async () => {
+  const { mode } = await closedTrial({ aiReplies: [{ wrong: true }] });
+  await assert.rejects(() => mode.proposeRecommendations({ trialId: 'trial-1', currentPrompt: 'p' }), TestModeError);
+  assert.deepEqual(await mode.listRecommendations('trial-1'), []);
+});
+
+test('a decision must be approved or rejected, by a named person', async () => {
+  const { mode } = await closedTrial({ aiReplies: [{ recommendations: [REC] }] });
+  await mode.proposeRecommendations({ trialId: 'trial-1', currentPrompt: 'p' });
+  await assert.rejects(() => mode.decideRecommendation({ id: 'trial-1:1', decision: 'auto', decidedBy: 'Dedi' }), TestModeError);
+  await assert.rejects(() => mode.decideRecommendation({ id: 'trial-1:1', decision: 'approved', decidedBy: '' }), TestModeError);
 });
