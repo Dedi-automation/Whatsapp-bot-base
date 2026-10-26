@@ -11,7 +11,7 @@
 //   3. npm run test:firestore   (fails at once if the variable is not set)
 // Under plain `npm test` without the emulator they are reported as skipped
 // (not run), never as passed. Emulator data is cleared before they run.
-const { test, before } = require('node:test');
+const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { createStorage } = require('../src/storage');
 const { createMemoryStorage } = require('../src/fakes/memory-storage');
@@ -24,14 +24,28 @@ if (!EMULATOR && process.env.npm_lifecycle_event === 'test:firestore') {
 const firestoreSkip = EMULATOR ? false : 'not run: FIRESTORE_EMULATOR_HOST is not set';
 const FIRESTORE_PROJECTS = ['bot-a', 'project-a', 'project-b', 'test-a'];
 
-if (EMULATOR) {
-  before(async () => {
-    for (const projectId of FIRESTORE_PROJECTS) {
-      const url = `http://${EMULATOR}/emulator/v1/projects/${projectId}/databases/(default)/documents`;
-      const res = await fetch(url, { method: 'DELETE' });
-      if (!res.ok) throw new Error(`Could not clear emulator data for ${projectId}: HTTP ${res.status}`);
+// Clears the emulator before the Firestore cases, so createIfAbsent passes on
+// re-runs. Runs as its own test (tests in a file run in order), so a stopped
+// emulator fails that test and the Firestore cases with a clear message, and
+// never the memory-fake or stub-client cases.
+let emulatorReady = false;
+async function clearEmulator() {
+  for (const projectId of FIRESTORE_PROJECTS) {
+    const url = `http://${EMULATOR}/emulator/v1/projects/${projectId}/databases/(default)/documents`;
+    let res;
+    try {
+      res = await fetch(url, { method: 'DELETE' });
+    } catch (err) {
+      throw new Error(`Firestore emulator not reachable at ${EMULATOR}. Is it running? (${err.cause?.code || err.message})`);
     }
-  });
+    if (!res.ok) throw new Error(`Could not clear emulator data for ${projectId}: HTTP ${res.status}`);
+  }
+  emulatorReady = true;
+}
+
+function firestoreFactory(projectId) {
+  if (!emulatorReady) throw new Error(`Firestore emulator not ready at ${EMULATOR}; see "Firestore emulator is reachable" above`);
+  return createStorage({ projectId });
 }
 
 function storageContract(name, factory, skip = false) {
@@ -75,16 +89,19 @@ function storageContract(name, factory, skip = false) {
   });
 }
 
-storageContract('Firestore storage', (projectId) => createStorage({ projectId }), firestoreSkip);
-storageContract('Memory fake', (projectId) => createMemoryStorage({ projectId }));
+test('Firestore emulator is reachable and cleared', { skip: firestoreSkip }, clearEmulator);
+
+storageContract('Firestore storage', firestoreFactory, firestoreSkip);
 
 test('T-11: a transcript record survives a restart (new storage instance, same project)', { skip: firestoreSkip }, async () => {
   // Real test needs Firestore. Written here so Branch A cannot skip it.
-  const first = createStorage({ projectId: 'test-a' });
+  const first = firestoreFactory('test-a');
   await first.set('messages', 'conv-1:1', { text: 'hello' });
-  const second = createStorage({ projectId: 'test-a' });
+  const second = firestoreFactory('test-a');
   assert.deepEqual(await second.get('messages', 'conv-1:1'), { text: 'hello' });
 });
+
+storageContract('Memory fake', (projectId) => createMemoryStorage({ projectId }));
 
 // Added in Branch A. These use a stub Firestore client, so they always run.
 
