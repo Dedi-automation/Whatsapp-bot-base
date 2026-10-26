@@ -10,21 +10,26 @@
 // Config is loaded first, so a missing variable stops startup before anything
 // else is built (T-01, F-14).
 //
-// Stage 2 wiring: the admin dashboard (B11) is mounted at /admin; when email is
-// configured (B10), a handoff emails the agent and each prompt recommendation from
-// a closed test-mode trial emails the owner a dashboard link (no token in it).
+// Stage 2 wiring: the admin dashboard (B11) is mounted at /admin. Notifications
+// (src/notify.js) go by email by default and by WhatsApp to the agent for the events
+// the bot lists: a handoff, the daily summary (POST /jobs/send-daily-digest, called
+// by the scheduler at 18:15), and each prompt recommendation from a closed test-mode
+// trial. Links point to the dashboard and carry no token.
 
 const { loadConfig } = require('./config');
 const { createDeduplicator } = require('./security');
 const { createWhatsAppClient } = require('./whatsapp');
 const { createAiClient } = require('./ai');
 const { createStorage } = require('./storage');
-const { isWithinSendWindow } = require('./schedule-window');
+const { isWithinSendWindow, wallClock } = require('./schedule-window');
 const { createConversationEngine } = require('./conversation');
 const { createServer } = require('./server');
 const { createAdmin } = require('./admin');
 const { createTestMode } = require('./test-mode');
-const { createEmailClient, notifyEmail, recommendationEmail } = require('./email');
+const { createEmailClient, recommendationEmail } = require('./email');
+const { createNotifier } = require('./notify');
+const { buildDailySummary } = require('./daily-summary');
+const { createJobRunner } = require('./jobs');
 
 const DEFAULT_LEAD_STATUSES = Object.freeze(['new', 'in_progress', 'handoff', 'closed']);
 
@@ -80,16 +85,33 @@ function createBot(options) {
   const email = config.email ? options.email || createEmailClient({ apiKey: config.email.apiKey, from: config.email.from }) : null;
   const notifyTo = config.email ? config.email.notifyTo : null;
   const leadLink = (id) => `${config.appBaseUrl.replace(/\/+$/, '')}/admin/leads/${encodeURIComponent(id)}`;
+  const notifier = createNotifier({
+    email,
+    emailTo: notifyTo,
+    whatsapp: config.agentWhatsApp ? whatsapp : null,
+    agentPhone: config.agentWhatsApp ? config.agentWhatsApp.phone : null,
+    whatsappEvents: config.agentWhatsApp ? [...config.agentWhatsApp.events] : [],
+    whatsappTemplate: config.agentWhatsApp ? config.agentWhatsApp.template : null,
+    log,
+  });
 
   async function onHandoff({ conversationId, reason }) {
-    if (!email) return;
-    await email.send(
-      notifyEmail({
-        to: notifyTo,
-        subject: `${botName || 'בוט'}: לקוח מבקש נציג`,
-        text: [`הלקוח ${conversationId} מבקש לדבר עם נציג.`, `סיבה: ${reason || 'לא צוינה'}`, `לפרטים בלוח: ${leadLink(conversationId)}`].join('\n'),
-      })
-    );
+    await notifier.send('handoff', {
+      subject: `${botName || 'בוט'}: לקוח מבקש נציג`,
+      text: [`הלקוח ${conversationId} מבקש לדבר עם נציג.`, `סיבה: ${reason || 'לא צוינה'}`, `לפרטים בלוח: ${leadLink(conversationId)}`].join('\n'),
+    });
+  }
+
+  const jobRunner = createJobRunner({ storage, now });
+  async function sendDailyDigest() {
+    const day = wallClock(now(), 'Asia/Jerusalem').date;
+    let summary = null;
+    let delivered = null;
+    const run = await jobRunner.runOnce('send-daily-digest', day, async () => {
+      summary = await buildDailySummary({ storage, now, botName, dashboardUrl: config.appBaseUrl });
+      delivered = await notifier.send('daily_summary', { subject: summary.subject, text: summary.text });
+    });
+    return { status: run.status, counts: summary && summary.counts, channels: delivered && delivered.channels };
   }
 
   const testMode = options.testMode
@@ -106,21 +128,20 @@ function createBot(options) {
 
   async function onTrialClosed(trialId) {
     const saved = await testMode.proposeRecommendations({ trialId, currentPrompt: options.systemPrompt });
-    if (!email) return;
     for (const rec of saved) {
       try {
-        await email.send(
-          recommendationEmail({
-            to: notifyTo,
-            botName: botName || 'בוט',
-            recommendationId: rec.id,
-            suggestion: `${rec.data.summary}\n${rec.data.change}`,
-            reasoning: rec.data.reason,
-            dashboardUrl: config.appBaseUrl,
-          })
-        );
+        // The email keeps its own layout (escaped fields, link to the recommendation page).
+        const mail = recommendationEmail({
+          to: notifyTo,
+          botName: botName || 'בוט',
+          recommendationId: rec.id,
+          suggestion: `${rec.data.summary}\n${rec.data.change}`,
+          reasoning: rec.data.reason,
+          dashboardUrl: config.appBaseUrl,
+        });
+        await notifier.send('recommendation', { subject: mail.subject, text: mail.text, html: mail.html });
       } catch (err) {
-        log.error(`bot: recommendation email failed: ${err.name}: ${err.message}`);
+        log.error(`bot: recommendation notification failed: ${err.name}: ${err.message}`);
       }
     }
   }
@@ -158,12 +179,16 @@ function createBot(options) {
     log,
   });
 
-  const server = createServer({ config, whatsapp, engine, jobs: options.jobs, admin, log: options.log });
+  // Base jobs first; a bot may add jobs or replace one by name.
+  const jobs = { 'send-daily-digest': sendDailyDigest, ...(options.jobs || {}) };
+  const server = createServer({ config, whatsapp, engine, jobs, admin, log: options.log });
 
   return {
     config,
     server,
     testMode,
+    notifier,
+    jobs,
     listen: () =>
       new Promise((resolve, reject) => {
         server.once('error', reject);

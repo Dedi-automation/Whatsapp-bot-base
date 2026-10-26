@@ -77,3 +77,24 @@ test('B10: some but not all email variables is a startup error naming the missin
   );
   assert.equal(EMAIL_ENV.length, 3);
 });
+
+test('agent WhatsApp: off without AGENT_WHATSAPP_PHONE', () => {
+  assert.equal(loadConfig(fullEnv()).agentWhatsApp, null);
+});
+
+test('agent WhatsApp: phone alone means all events, no template', () => {
+  const c = loadConfig({ ...fullEnv(), AGENT_WHATSAPP_PHONE: '972500000077' }).agentWhatsApp;
+  assert.deepEqual([...c.events], ['handoff', 'daily_summary', 'recommendation']);
+  assert.equal(c.template, null);
+});
+
+test('agent WhatsApp: listed events and a template (default language he)', () => {
+  const c = loadConfig({ ...fullEnv(), AGENT_WHATSAPP_PHONE: '972500000077', AGENT_WHATSAPP_EVENTS: 'handoff, daily_summary', AGENT_WHATSAPP_TEMPLATE: 'agent_alert' }).agentWhatsApp;
+  assert.deepEqual([...c.events], ['handoff', 'daily_summary']);
+  assert.deepEqual({ ...c.template }, { name: 'agent_alert', language: 'he' });
+});
+
+test('agent WhatsApp: unknown event or events without a phone is a startup error', () => {
+  assert.throws(() => loadConfig({ ...fullEnv(), AGENT_WHATSAPP_PHONE: '1', AGENT_WHATSAPP_EVENTS: 'handoff,party' }), /unknown events: party/);
+  assert.throws(() => loadConfig({ ...fullEnv(), AGENT_WHATSAPP_EVENTS: 'handoff' }), (err) => err instanceof ConfigError && err.missing.includes('AGENT_WHATSAPP_PHONE'));
+});

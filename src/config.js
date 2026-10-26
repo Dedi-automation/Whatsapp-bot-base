@@ -8,6 +8,7 @@
 // (decisions.md, Open). AI_MODEL is a proposal; its value is TO VERIFY.
 
 const { ConfigError } = require('./errors');
+const { EVENTS: NOTIFY_EVENTS } = require('./notify');
 
 const DEFAULT_PORT = 8080;
 
@@ -47,6 +48,13 @@ const REQUIRED_ENV = Object.freeze([
  * @property {{apiKey: string, from: string, notifyTo: string} | null} email
  *   B10. SENDGRID_API_KEY, SENDGRID_FROM_EMAIL, NOTIFY_EMAIL: all three or none.
  *   null when none is set (the bot sends no email). Some but not all: ConfigError.
+ * @property {{phone: string, events: string[], template: {name: string, language: string} | null} | null} agentWhatsApp
+ *   WhatsApp notifications to the agent, optional (Dedi, 2026-10-26: email by default,
+ *   WhatsApp when asked). AGENT_WHATSAPP_PHONE turns it on. AGENT_WHATSAPP_EVENTS is a
+ *   comma list of handoff, daily_summary, recommendation (default: all of them).
+ *   AGENT_WHATSAPP_TEMPLATE (+ AGENT_WHATSAPP_TEMPLATE_LANGUAGE, default 'he') sends a
+ *   Meta-approved template, needed outside a 24-hour conversation. Events or template
+ *   without a phone, or an unknown event: ConfigError.
  */
 
 /**
@@ -89,6 +97,30 @@ function loadConfig(env = process.env) {
       ? Object.freeze({ apiKey: env.SENDGRID_API_KEY, from: env.SENDGRID_FROM_EMAIL, notifyTo: env.NOTIFY_EMAIL })
       : null;
 
+  let agentWhatsApp = null;
+  const listed = isSet('AGENT_WHATSAPP_EVENTS')
+    ? env.AGENT_WHATSAPP_EVENTS.split(',').map((e) => e.trim()).filter((e) => e !== '')
+    : null;
+  if (isSet('AGENT_WHATSAPP_PHONE')) {
+    const unknown = (listed || []).filter((e) => !NOTIFY_EVENTS.includes(e));
+    if (unknown.length > 0) {
+      const err = new ConfigError(['AGENT_WHATSAPP_EVENTS']);
+      err.message = `AGENT_WHATSAPP_EVENTS has unknown events: ${unknown.join(', ')} (known: ${NOTIFY_EVENTS.join(', ')})`;
+      throw err;
+    }
+    agentWhatsApp = Object.freeze({
+      phone: env.AGENT_WHATSAPP_PHONE,
+      events: Object.freeze(listed || [...NOTIFY_EVENTS]),
+      template: isSet('AGENT_WHATSAPP_TEMPLATE')
+        ? Object.freeze({ name: env.AGENT_WHATSAPP_TEMPLATE, language: optional('AGENT_WHATSAPP_TEMPLATE_LANGUAGE') || 'he' })
+        : null,
+    });
+  } else if (listed || isSet('AGENT_WHATSAPP_TEMPLATE')) {
+    const err = new ConfigError(['AGENT_WHATSAPP_PHONE']);
+    err.message = 'AGENT_WHATSAPP_EVENTS or AGENT_WHATSAPP_TEMPLATE is set, but AGENT_WHATSAPP_PHONE is missing';
+    throw err;
+  }
+
   return Object.freeze({
     anthropicApiKey: env.ANTHROPIC_API_KEY,
     aiModel: env.AI_MODEL,
@@ -106,6 +138,7 @@ function loadConfig(env = process.env) {
       alertPhone: optional('HEALTH_CHECK_ALERT_PHONE'),
     }),
     email,
+    agentWhatsApp,
   });
 }
 

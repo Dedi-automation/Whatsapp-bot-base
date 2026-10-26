@@ -30,6 +30,7 @@ const { isWithinSendWindow } = require(root + '/schedule-window');
 const CUSTOMER = '972500000001';
 const TESTER = '972500000099';
 const OWNER_PHONE = '972500000098';
+const AGENT_PHONE = '972500000077';
 const ATTACK = `<script>alert('x')</script>`;
 const PNG = Buffer.from('89504e470d0a1a0a', 'hex');
 
@@ -52,6 +53,9 @@ async function runDryRun(options = {}) {
     NOTIFY_EMAIL: 'agent@example.com',
     HEALTH_CHECK_PHONE: OWNER_PHONE,
     HEALTH_CHECK_ALERT_PHONE: OWNER_PHONE,
+    // Dedi, 2026-10-26: email by default; WhatsApp to the agent for these events.
+    AGENT_WHATSAPP_PHONE: AGENT_PHONE,
+    AGENT_WHATSAPP_EVENTS: 'handoff,daily_summary',
   });
 
   // ---- recording network ----
@@ -188,7 +192,9 @@ async function runDryRun(options = {}) {
     aiQueue.push({ text: 'תודה! נציג יחזור אליך.', handoff: true, handoff_reason: `price question ${ATTACK}` });
     const h = await deliver(CUSTOMER, text('כמה זה עולה?'));
     const handoffMail = sentSince(mark).find((s) => s.channel === 'email');
-    check('handoff: customer reply, then email to the agent', h.results[0] === 'handoff' && sentSince(mark)[0].channel === 'whatsapp' && handoffMail && handoffMail.to === 'agent@example.com');
+    const agentMsg = sentSince(mark).find((s) => s.channel === 'whatsapp' && s.to === AGENT_PHONE);
+    check('handoff: customer reply first, then email to the agent', h.results[0] === 'handoff' && sentSince(mark)[0].to === CUSTOMER && handoffMail && handoffMail.to === 'agent@example.com');
+    check('handoff: WhatsApp message to the agent (listed event)', agentMsg && agentMsg.text.includes(CUSTOMER) && agentMsg.text.includes('/admin/leads/'));
     check('F-22 handoff email escapes the reason and has no token', handoffMail && !handoffMail.html.includes('<script') && !handoffMail.html.includes('token'));
     check('handoff recorded on the lead', (await storage.get('conversations', CUSTOMER)).agent_action_required === true);
 
@@ -222,6 +228,7 @@ async function runDryRun(options = {}) {
     check('T-10 4 answers + screenshot saved, closing text sent', last.results[0] === 'test_feedback' && notes.length === 5 && sentSince(mark).some((s) => s.text === 'תודה! ההערות נשמרו.'));
     const recMail = sentSince(mark).find((s) => s.channel === 'email');
     check('recommendation saved as pending and emailed to the owner with a dashboard link', recs.length === 1 && recs[0].data.status === 'pending_approval' && recMail && recMail.plain.includes('https://bot.example.com/admin/recommendations/'));
+    check('recommendation is not sent to the agent by WhatsApp (not a listed event)', !sentSince(mark).some((s) => s.to === AGENT_PHONE));
 
     // 10. Dashboard (B11): login, lead with image, approve the recommendation
     const login = await fetch(`${base}/admin/login`, { method: 'POST', redirect: 'manual', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ token: env.ADMIN_TOKEN }).toString() });
@@ -245,7 +252,18 @@ async function runDryRun(options = {}) {
     const second = await runJob();
     check('T-08 two runs of the reminder job send one message', first.result.status === 'ran' && second.result.status === 'already_done' && sentSince(mark).length === 1);
 
-    // 12. Health check: real result message (recorded), no alert when healthy
+    // 12. Daily summary at 18:15 Israel time (after the 17:50 customer window), run twice
+    clock = new Date('2026-10-26T16:15:00Z');
+    mark = wouldSend.length;
+    const digest = () => fetch(`${base}/jobs/send-daily-digest`, { method: 'POST', headers: { Authorization: `Bearer ${env.SCHEDULED_JOB_TOKEN}` } }).then((r) => r.json());
+    const d1 = await digest();
+    const d2 = await digest();
+    const digestSent = sentSince(mark);
+    check('daily summary at 18:15: email + WhatsApp to the agent, once (T-08)', d1.result.status === 'ran' && d2.result.status === 'already_done' && digestSent.length === 2 && digestSent.some((s) => s.channel === 'email') && digestSent.some((s) => s.to === AGENT_PHONE));
+    check('daily summary counts the day', d1.result.counts.handoffsToday === 1 && d1.result.counts.waiting === 1);
+    clock = new Date('2026-10-26T11:00:00Z');
+
+    // 13. Health check: real result message (recorded), no alert when healthy
     mark = wouldSend.length;
     const health = await checkHealth({ storage, whatsapp, ai, config: bot.config, now });
     check('health check passes and sends its result message', health.ok && sentSince(mark).length === 1 && sentSince(mark)[0].to === OWNER_PHONE);

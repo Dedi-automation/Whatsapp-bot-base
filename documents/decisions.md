@@ -52,6 +52,11 @@ Decided 2026-10-26 (Dedi approved the stage 2 plan):
 40. Email (B10) goes through the SendGrid HTTP API. SENDGRID_API_KEY, SENDGRID_FROM_EMAIL and NOTIFY_EMAIL are set all together or not at all. Emails link to the dashboard and never carry a token.
 41. Stage 2 is built and tested from the cloud session and GitHub Actions; the owner does not run commands locally. The real test environment check runs as a manual GitHub Actions workflow with repository secrets.
 
+Decided 2026-10-26 (Dedi, after stage 2):
+
+42. Notifications to the agent and owner: email is the default channel, sent automatically to the configured address (NOTIFY_EMAIL). WhatsApp to the agent is optional, per bot and per event, when needed or asked for (AGENT_WHATSAPP_PHONE, AGENT_WHATSAPP_EVENTS, AGENT_WHATSAPP_TEMPLATE). Events: a customer asked for an agent, the daily summary, a prompt improvement suggestion.
+43. The agent gets a daily summary at 18:15 Israel time (the scheduler calls POST /jobs/send-daily-digest). Like health alerts (item 36), messages to the agent and owner are sent at any hour; the 17:50 window applies to customers only.
+
 ## Proposed, not yet approved
 
 - Source of truth for documents: git. Claude Docs pages are read-only views refreshed from git.

@@ -84,3 +84,40 @@ test('createBot: without email variables, a handoff sends no email and still suc
   assert.deepEqual((await res.json()).results, ['handoff']);
   assert.equal(email.sent.length, 0);
 });
+
+test('createBot: AGENT_WHATSAPP_PHONE sends the handoff to the agent by WhatsApp too', async (t) => {
+  const email = createFakeEmailClient();
+  const whatsapp = createFakeWhatsAppClient();
+  const app = await startBot({
+    env: env({ SENDGRID_API_KEY: 'k', SENDGRID_FROM_EMAIL: 'bot@example.com', NOTIFY_EMAIL: 'agent@example.com', AGENT_WHATSAPP_PHONE: '972500000077', AGENT_WHATSAPP_EVENTS: 'handoff' }),
+    ai: createFakeAiClient([{ text: 'thanks', handoff: true }]),
+    email,
+    whatsapp,
+  });
+  t.after(app.close);
+  const crypto = require('node:crypto');
+  const raw = JSON.stringify({ messages: [{ kind: 'text', messageId: 'w1', from: '972500000001', text: 'agent please' }] });
+  const sig = 'sha256=' + crypto.createHmac('sha256', 'value-of-WHATSAPP_APP_SECRET').update(raw).digest('hex');
+  await fetch(`${app.base}/whatsapp-webhook`, { method: 'POST', body: raw, headers: { 'X-Hub-Signature-256': sig } });
+  assert.deepEqual(whatsapp.sent.map((m) => m.to), ['972500000001', '972500000077'], 'customer first, then the agent');
+  assert.equal(email.sent.length, 1);
+});
+
+test('createBot: POST /jobs/send-daily-digest sends the summary once per day (job token in header)', async (t) => {
+  const email = createFakeEmailClient();
+  const app = await startBot({
+    env: env({ SENDGRID_API_KEY: 'k', SENDGRID_FROM_EMAIL: 'bot@example.com', NOTIFY_EMAIL: 'agent@example.com' }),
+    ai: createFakeAiClient([]),
+    email,
+    now: () => new Date('2026-10-26T16:15:00Z'),
+  });
+  t.after(app.close);
+  const call = () => fetch(`${app.base}/jobs/send-daily-digest`, { method: 'POST', headers: { Authorization: 'Bearer value-of-SCHEDULED_JOB_TOKEN' } }).then((r) => r.json());
+  const first = await call();
+  const second = await call();
+  assert.equal(first.result.status, 'ran');
+  assert.deepEqual(first.result.channels, [{ channel: 'email', ok: true }]);
+  assert.equal(second.result.status, 'already_done');
+  assert.equal(email.sent.length, 1);
+  assert.match(email.sent[0].subject, /סיכום יומי/);
+});
