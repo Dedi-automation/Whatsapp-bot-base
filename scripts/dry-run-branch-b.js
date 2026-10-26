@@ -1,5 +1,5 @@
 'use strict';
-// Branch B DRY RUN (run: node scripts/dry-run-branch-b.js): webhook body -> signature -> parse -> engine -> WhatsApp client.
+// Branch B DRY RUN (run: node scripts/dry-run-branch-b.js): HTTP request -> server -> signature -> parse -> engine -> WhatsApp client.
 // The WhatsApp client is real; its fetch only records requests, nothing leaves the machine.
 // AI and storage are the step 0 fakes; the send window is a stub (branch D not merged).
 const root = require('node:path').join(__dirname, '..', 'src');
@@ -8,6 +8,7 @@ const { loadConfig, REQUIRED_ENV } = require(root + '/config');
 const { verifyWhatsAppSignature, checkBearerToken, createDeduplicator } = require(root + '/security');
 const { createWhatsAppClient } = require(root + '/whatsapp');
 const { createConversationEngine } = require(root + '/conversation');
+const { createServer } = require(root + '/server');
 const { createMemoryStorage } = require(root + '/fakes/memory-storage');
 const { createFakeAiClient } = require(root + '/fakes/ai-fake');
 
@@ -39,18 +40,27 @@ const webhook = (messages) => {
   return { raw, sig };
 };
 
+const quiet = { info() {}, error() {} };
+let base;
 async function deliver(label, messages, { badSig = false } = {}) {
   const { raw, sig } = webhook(messages);
-  const ok = verifyWhatsAppSignature({ rawBody: raw, signatureHeader: badSig ? sig.replace(/.$/, '0') : sig, appSecret: config.whatsappAppSecret });
-  if (!ok) return console.log(`${label}: rejected (bad signature)`);
-  for (const m of whatsapp.parseIncoming(JSON.parse(raw))) {
-    const before = wouldSend.length;
-    const out = await engine.handleIncoming(m);
-    console.log(`${label}: ${out.status}, would send ${wouldSend.length - before}`);
-  }
+  const before = wouldSend.length;
+  const res = await fetch(`${base}/whatsapp-webhook`, {
+    method: 'POST',
+    body: raw,
+    headers: { 'X-Hub-Signature-256': badSig ? sig.replace(/.$/, sig.endsWith('0') ? '1' : '0') : sig },
+  });
+  const out = await res.json();
+  console.log(`${label}: HTTP ${res.status} ${out.results ? out.results.join(',') : out.error}, would send ${wouldSend.length - before}`);
 }
 
 (async () => {
+  let jobRuns = 0;
+  const server = createServer({ config, whatsapp, engine, jobs: { 'send-reminders': async () => { jobRuns += 1; return { sent: 0 }; } }, log: quiet });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  base = `http://127.0.0.1:${server.address().port}`;
+  const challenge = await fetch(`${base}/whatsapp-webhook?hub.mode=subscribe&hub.verify_token=${config.whatsappVerifyToken}&hub.challenge=42`);
+  console.log(`0 webhook registration: HTTP ${challenge.status} ${await challenge.text()}`);
   const from = '972500000001';
   await deliver('1 text', [{ id: 'w1', from, type: 'text', text: { body: 'היי' } }]);
   await deliver('2 same id again', [{ id: 'w1', from, type: 'text', text: { body: 'היי' } }]);
@@ -59,10 +69,15 @@ async function deliver(label, messages, { badSig = false } = {}) {
   await deliver('5 handoff', [{ id: 'w4', from, type: 'text', text: { body: 'כמה זה עולה?' } }]);
   within = false;
   await deliver('6 outside window', [{ id: 'w5', from, type: 'text', text: { body: 'עוד שאלה' } }]);
-  console.log('job token in URL accepted:', checkBearerToken({ url: '/jobs/send-reminders?token=dry-SCHEDULED_JOB_TOKEN', headers: { authorization: 'Bearer dry-SCHEDULED_JOB_TOKEN' }, expected: config.scheduledJobToken }));
-  console.log('job token in header accepted:', checkBearerToken({ url: '/jobs/send-reminders', headers: { authorization: 'Bearer dry-SCHEDULED_JOB_TOKEN' }, expected: config.scheduledJobToken }));
+  const jobUrl = `${base}/jobs/send-reminders`;
+  const auth = { Authorization: `Bearer ${config.scheduledJobToken}` };
+  const inUrl = await fetch(`${jobUrl}?token=${config.scheduledJobToken}`, { method: 'POST', headers: auth });
+  const inHeader = await fetch(jobUrl, { method: 'POST', headers: auth });
+  console.log(`job token in URL: HTTP ${inUrl.status}; in header: HTTP ${inHeader.status}; job runs: ${jobRuns}`);
+  console.log(`health: HTTP ${(await fetch(`${base}/health`)).status}`);
   const conv = await storage.get('conversations', from);
   console.log('conversation:', JSON.stringify({ messageCount: conv.messageCount, agent_action_required: conv.agent_action_required, handoff_reason: conv.handoff_reason }));
   console.log('would have sent:');
   for (const s of wouldSend) console.log('  ', s.url.replace(/^https:\/\/[^/]+/, ''), JSON.stringify(s.body.text));
+  server.close();
 })();
