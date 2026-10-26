@@ -36,11 +36,23 @@ const has = (...names) => names.every((n) => typeof env[n] === 'string' && env[n
 async function firestorePart() {
   if (!has('FIRESTORE_PROJECT_ID', 'GOOGLE_APPLICATION_CREDENTIALS_JSON')) return ['not run', 'FIRESTORE_PROJECT_ID or GOOGLE_APPLICATION_CREDENTIALS_JSON not set'];
   if (env.FIRESTORE_EMULATOR_HOST) return ['FAIL', 'FIRESTORE_EMULATOR_HOST is set; this check must reach the real test project'];
+  // Only shapes and yes/no answers are reported here, never characters of a secret.
   const projectId = env.FIRESTORE_PROJECT_ID.trim();
-  if (!/^[a-z][a-z0-9-]{4,28}[a-z0-9]$/.test(projectId)) {
-    // Name the odd characters by code (a copy from a right-to-left page can carry invisible marks).
-    const odd = [...projectId].filter((c) => !/[a-z0-9-]/.test(c)).map((c) => `U+${c.codePointAt(0).toString(16).toUpperCase().padStart(4, '0')}`);
-    return ['FAIL', `FIRESTORE_PROJECT_ID is not a valid project ID (length ${projectId.length}, other characters: ${odd.join(' ') || 'none'})`];
+  let key = null;
+  try {
+    key = JSON.parse(env.GOOGLE_APPLICATION_CREDENTIALS_JSON);
+  } catch {
+    key = null;
+  }
+  const keyOk = Boolean(key && key.type === 'service_account' && typeof key.private_key === 'string' && typeof key.project_id === 'string');
+  const idOk = /^[a-z][a-z0-9-]{4,28}[a-z0-9]$/.test(projectId);
+  if (!idOk || !keyOk || key.project_id !== projectId) {
+    const where = [
+      `TEST_FIRESTORE_PROJECT_ID ${idOk ? 'looks like a project ID' : projectId.startsWith('{') ? 'holds JSON (the key file was pasted here)' : `is not a project ID (length ${projectId.length})`}`,
+      `TEST_FIRESTORE_SERVICE_ACCOUNT_JSON ${keyOk ? 'is a service account key' : 'is not a service account key file'}`,
+      `same project in both: ${keyOk && idOk && key.project_id === projectId ? 'yes' : 'no'}`,
+    ];
+    return ['FAIL', where.join('; ')];
   }
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'smoke-'));
   const keyFile = path.join(dir, 'key.json');
