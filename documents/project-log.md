@@ -42,3 +42,14 @@
 - Merged step0/contracts into main (fast-forward) at 14c1ca4 and pushed to origin.
 - Tests: 64 total, 7 pass, 55 fail (stubs), 2 todo.
 - Next: step 1 branches A (data), C (AI), D (scheduling).
+## 2026-10-26 - step 1, branch C (AI) - branch-c/ai, PR #2
+
+- Scope: B6 AI client, `src/ai.js`, `test/ai.test.js`. Branch commit 23c3b59.
+- Findings closed: F-10 (missing variable is an explicit error; model from config only) and F-29 (code side: no empty value reaches the prompt). The F-10 recount of 20/21 variables and the prompt content of F-29 stay per bot.
+- Tests: T-06, T-07, T-14. `node --test test/ai.test.js`: 16 tests, 16 pass (6 step-0 + 10 added).
+- `npm test` on the branch: 74 tests, 23 pass, 49 fail, 2 todo. Before: 64 / 7 / 55 / 2. All 49 failures are other modules' step-0 stubs.
+- Branch dry run: pass (logging fetch, nothing sent). T-09 full DRY RUN deferred to step 2.
+- Decided by Dedi (2026-10-26): a whitespace-only prompt value counts as missing (stricter than the step-0 JSDoc); default `max_tokens` is 1024.
+- Merged into main at 07734a8 (merge commit, approved by Dedi). `npm test` on main after merge: 74 tests, 23 pass, 49 fail (other branches' stubs), 2 todo. `test/ai.test.js`: 16/16 pass.
+- Rollback: revert merge commit 07734a8 (`git revert -m 1 07734a8`); it touches only `src/ai.js` and `test/ai.test.js`.
+- Next: branch D (scheduling) rebases on main and merges.
