@@ -29,7 +29,17 @@ jobs:
           SENDGRID_API_KEY: ${{ secrets.TEST_SENDGRID_API_KEY }}
           SENDGRID_FROM_EMAIL: ${{ secrets.TEST_SENDGRID_FROM_EMAIL }}
           NOTIFY_EMAIL: ${{ secrets.TEST_NOTIFY_EMAIL }}
+        # Each result line is also written as an annotation, so the result can be read
+        # without the job log, and is written even when a check fails.
         run: |
-          node scripts/smoke-real.js | tee smoke.txt
-          echo "::notice title=Smoke result::$(tail -1 smoke.txt)"
+          set +e
+          node scripts/smoke-real.js > smoke.txt 2>&1
+          status=$?
+          set -e
+          cat smoke.txt
           cat smoke.txt >> "$GITHUB_STEP_SUMMARY"
+          grep '^| [A-Z]' smoke.txt | grep -v '^| Check' | while IFS= read -r line; do
+            echo "::notice title=Smoke check::${line//$'\n'/ }"
+          done
+          echo "::notice title=Smoke result::$(tail -1 smoke.txt)"
+          exit $status

@@ -36,12 +36,30 @@ const has = (...names) => names.every((n) => typeof env[n] === 'string' && env[n
 async function firestorePart() {
   if (!has('FIRESTORE_PROJECT_ID', 'GOOGLE_APPLICATION_CREDENTIALS_JSON')) return ['not run', 'FIRESTORE_PROJECT_ID or GOOGLE_APPLICATION_CREDENTIALS_JSON not set'];
   if (env.FIRESTORE_EMULATOR_HOST) return ['FAIL', 'FIRESTORE_EMULATOR_HOST is set; this check must reach the real test project'];
+  // Only shapes and yes/no answers are reported here, never characters of a secret.
+  const projectId = env.FIRESTORE_PROJECT_ID.trim();
+  let key = null;
+  try {
+    key = JSON.parse(env.GOOGLE_APPLICATION_CREDENTIALS_JSON);
+  } catch {
+    key = null;
+  }
+  const keyOk = Boolean(key && key.type === 'service_account' && typeof key.private_key === 'string' && typeof key.project_id === 'string');
+  const idOk = /^[a-z][a-z0-9-]{4,28}[a-z0-9]$/.test(projectId);
+  if (!idOk || !keyOk || key.project_id !== projectId) {
+    const where = [
+      `TEST_FIRESTORE_PROJECT_ID ${idOk ? 'looks like a project ID' : projectId.startsWith('{') ? 'holds JSON (the key file was pasted here)' : `is not a project ID (length ${projectId.length})`}`,
+      `TEST_FIRESTORE_SERVICE_ACCOUNT_JSON ${keyOk ? 'is a service account key' : 'is not a service account key file'}`,
+      `same project in both: ${keyOk && idOk && key.project_id === projectId ? 'yes' : 'no'}`,
+    ];
+    return ['FAIL', where.join('; ')];
+  }
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'smoke-'));
   const keyFile = path.join(dir, 'key.json');
   fs.writeFileSync(keyFile, env.GOOGLE_APPLICATION_CREDENTIALS_JSON, { mode: 0o600 });
   process.env.GOOGLE_APPLICATION_CREDENTIALS = keyFile;
   try {
-    const storage = createStorage({ projectId: env.FIRESTORE_PROJECT_ID });
+    const storage = createStorage({ projectId });
     const id = `smoke-${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
     await storage.set('smoke_checks', id, { at: new Date().toISOString(), source: 'smoke-real' });
     const back = await storage.get('smoke_checks', id);
@@ -49,7 +67,7 @@ async function firestorePart() {
     const gone = (await storage.get('smoke_checks', id)) === null;
     return back && gone ? ['PASS', 'write, read back and delete on the test project'] : ['FAIL', 'record not read back or not deleted'];
   } catch (err) {
-    return ['FAIL', `${err.name}: ${err.message}`];
+    return ['FAIL', `${err.name}: ${String(err.message).replace(/\s+/g, ' ')}`];
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
