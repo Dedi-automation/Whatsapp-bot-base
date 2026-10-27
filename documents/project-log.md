@@ -165,7 +165,7 @@ Dedi's decisions 42, 43 and 44: email is the default channel for notifications t
 
 - `smoke-real.yml` writes each check as an annotation, also when a check fails (the job log cannot be read from the cloud session).
 - `scripts/smoke-real.js` checks the shape of the Firestore secrets and reports only yes/no answers.
-- Incident T-SEC-01 (2026-10-26): an intermediate diagnostic printed character codes of `TEST_FIRESTORE_PROJECT_ID`, which held the service account key file, so key characters appeared in the annotations of one workflow run (40371154517). The run was deleted about two minutes later; the repository is private. The test project's keys were deleted and replaced by Dedi on 2026-10-27. Rule since then: a diagnostic on a secret reports only its length, shape or yes/no, never its characters.
+- Incident T-SEC-01 (2026-10-26): an intermediate diagnostic printed character codes of `TEST_FIRESTORE_PROJECT_ID`, which held the service account key file, so key characters appeared in the annotations of one workflow run (40371154517). The run was deleted about two minutes later; the repository is private. Dedi put a new key in the secret on 2026-10-27; deleting the old keys in Google Cloud is to be confirmed. Rule since then: a diagnostic on a secret reports only its length, shape or yes/no, never its characters.
 
 ## 2026-10-27 - stage 3, base release 1.0.0 - stage3/release-1.0.0, PR #14 (merge 709d5be)
 
