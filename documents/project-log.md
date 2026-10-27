@@ -160,3 +160,31 @@ Dedi's decisions 42, 43 and 44: email is the default channel for notifications t
 
 - Rollback point: main 27e228d. Revert with `git revert -m 1 6b6925f` (main returns to email-only notifications, no summaries).
 - Before going live: a Meta-approved template for agent WhatsApp outside 24 hours; the 18:15 scheduler job at deployment.
+
+## 2026-10-26 - real test environment check fixes - stage2/smoke-report, PR #13 (merge 9accf11)
+
+- `smoke-real.yml` writes each check as an annotation, also when a check fails (the job log cannot be read from the cloud session).
+- `scripts/smoke-real.js` checks the shape of the Firestore secrets and reports only yes/no answers.
+- Incident T-SEC-01 (2026-10-26): an intermediate diagnostic printed character codes of `TEST_FIRESTORE_PROJECT_ID`, which held the service account key file, so key characters appeared in the annotations of one workflow run (40371154517). The run was deleted about two minutes later; the repository is private. The test project's keys were deleted and replaced by Dedi on 2026-10-27. Rule since then: a diagnostic on a secret reports only its length, shape or yes/no, never its characters.
+
+## 2026-10-27 - stage 3, base release 1.0.0 - stage3/release-1.0.0, PR #14 (merge 709d5be)
+
+Dedi, 2026-10-26: "continue to stage 3 and finish the base". Decision 45.
+
+- Version 1.0.0; a bot receives only `src/`; Node.js 22 or later.
+- T-15 version pin test (`test/version-pin.test.js`): a bot pinned to v1.0.0 keeps it after a newer tag, and moves only when it installs the new tag by name. Found: editing the pin in package.json alone does not upgrade (the lock file keeps the old commit); README.md gives the upgrade command.
+- README.md (how a bot pins, upgrades, configures and tests), CHANGELOG.md.
+
+### Release run on main (release procedure, test-plan.md)
+
+| Date (UTC) | Where | Command | Result |
+|---|---|---|---|
+| 2026-10-27 11:56 | cloud session, Firestore emulator, main 709d5be | `node scripts/release-check.js` | T-01 to T-17 all pass (T-15: 2 tests); 259 tests, 259 pass, 0 fail, 0 skipped, 0 todo; RELEASE CHECK PASS |
+| 2026-10-27 11:56 | cloud session, Firestore emulator, main 709d5be | `node scripts/dry-run.js` (T-09) | 26 checks pass; 22 messages would have been sent; nothing was sent |
+| 2026-10-27 | GitHub Actions, main 709d5be | workflow `test` (emulator) | 259 tests, 259 pass, 0 fail, 0 skipped |
+| 2026-10-27 12:00 | GitHub Actions, main 709d5be, run 40500451555 | workflow `smoke-real` | Firestore test project whatsapp-bot-test-e953e: PASS (write, read back, delete). WhatsApp and email: not run (no test keys yet) |
+
+- Owner approval: Dedi merged PR #14 (2026-10-27).
+- Tag: `v1.0.0` on main after this entry is merged.
+- Rollback point: main 27e228d (before notifications) or 6b6925f (before stage 3). A bot pinned to v1.0.0 is not affected by later base changes.
+- Moved to stage 4 (first bot, travel insurance): real WhatsApp and SendGrid checks (test keys, public URL), Meta template for agent WhatsApp outside 24 hours, scheduler jobs (18:15 digest), read access to this private repository for the bot's install.
