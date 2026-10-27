@@ -58,6 +58,10 @@ Decided 2026-10-26 (Dedi, after stage 2):
 43. The agent gets a daily summary at 18:15 Israel time (the scheduler calls POST /jobs/send-daily-digest). Like health alerts (item 36), messages to the agent and owner are sent at any hour; the 17:50 window applies to customers only.
 44. Weekly and monthly summaries (Dedi, 2026-10-26). Each daily summary saves the day's counts (daily_summaries/<date>). On Thursday the daily message also sums the 7 days ending that day (Friday to Thursday). On the 1st of the month a separate message sums the previous month, broken down by weeks ending on Thursday. A day with no saved counts is reported as missing. The monthly invoice comes from Grow in its own email; billing stays outside the base (item 8). A bot may add one line about the invoice (createBot option monthlyNote).
 
+Decided 2026-10-26 (stage 3; Dedi: "continue to stage 3 and finish the base"):
+
+45. Release 1.0.0. Tags are `vX.Y.Z` on main, created only after the release PR is merged, the release check (T-01 to T-17) and the DRY RUN pass on main, and the result is in project-log.md. A bot pins a tag in its package.json (`github:Dedi-automation/Whatsapp-bot-base#v1.0.0`); upgrades are explicit (item 15, T-15). A bot receives only `src/`. Node.js 22 or later (the version CI runs; the test runner needs 21+). The real WhatsApp and SendGrid checks need test keys and a public URL, so they move to the first bot's deployment (stage 4); the real Firestore check runs before the tag when its secrets are fixed.
+
 ## Proposed, not yet approved
 
 - Source of truth for documents: git. Claude Docs pages are read-only views refreshed from git.
