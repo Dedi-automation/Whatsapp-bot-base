@@ -139,5 +139,24 @@ Plan: /mnt/project-files/plans/stage2-plan.md, approved by Dedi 2026-10-26. Buil
 
 - Rollback point: main ed2a74d (end of step 1). Each PR can be reverted alone with `git revert -m 1 <merge>`, newest first: a6019eb, b7c8576, b4564cc, fb7282c.
 - Not yet done: the real test environment check (needs the `TEST_*` secrets in GitHub; the cloud session's network blocks graph.facebook.com and api.sendgrid.com, so it runs in GitHub Actions). A real incoming WhatsApp message needs a public URL (deployment).
-- Open: whether emails to the agent wait for the send window (built: they do not, like health alerts; asked Dedi).
+- Answered (decision 43): messages to the agent and owner do not wait for the send window, like health alerts.
 - Next: step 3, base 1.0.0 tag (spec section 8), after the real test environment check passes and Dedi approves.
+
+## 2026-10-26 - stage 2 notifications and summaries - stage2/notifications, PR #11 (merge 6b6925f)
+
+Dedi's decisions 42, 43 and 44: email is the default channel for notifications to the agent and owner; WhatsApp to the agent is optional per event (handoff, daily_summary, monthly_summary, recommendation). Daily summary at 18:15 Israel time; on Thursday it also sums the week (Friday to Thursday); on the 1st a separate email sums the previous month by weeks. The monthly invoice comes from Grow in its own email (billing stays outside the base).
+
+- `src/notify.js`, `src/daily-summary.js` (daily counts saved in `daily_summaries/<date>`), job `send-daily-digest` (once per Israel day, T-08), config `AGENT_WHATSAPP_PHONE`, `AGENT_WHATSAPP_EVENTS`, `AGENT_WHATSAPP_TEMPLATE`, `AGENT_WHATSAPP_TEMPLATE_LANGUAGE`, createBot option `monthlyNote`.
+- Full test run history (commits 680e982, 4fb0474) is in the PR body.
+
+### Run on main after the merge (2026-10-26 17:20 UTC, main 6b6925f)
+
+| Where | Command | Result |
+|---|---|---|
+| GitHub Actions, PR head 4fb0474 | workflow `test` (emulator) | 257 tests, 257 pass, 0 fail, 0 skipped, 0 todo |
+| cloud session, Firestore emulator | `npm test` | 257 tests, 257 pass, 0 fail, 0 skipped, 0 todo |
+| cloud session, Firestore emulator | `node scripts/dry-run.js` (T-09) | all checks pass, including handoff to agent WhatsApp, daily summary once, Thursday week, 1st-of-month summary with the Grow line; nothing was sent |
+| cloud session, Firestore emulator | `node scripts/release-check.js` | RELEASE CHECK PASS (T-15 waits for the first tag) |
+
+- Rollback point: main 27e228d. Revert with `git revert -m 1 6b6925f` (main returns to email-only notifications, no summaries).
+- Before going live: a Meta-approved template for agent WhatsApp outside 24 hours; the 18:15 scheduler job at deployment.
