@@ -10,7 +10,8 @@ affected until they upgrade; without the new `outbound` option nothing changes.
 
 - Signup link: the dashboard sends a Meta-approved template with the link to one phone.
 - Campaigns: upload a CSV or pasted list (Hebrew Excel CSV is read correctly), start and
-  pause, status per recipient (waiting, sent, delivered, read, failed, opted out).
+  pause, status per recipient (waiting, sent, delivered, read, replied with the text,
+  failed, opted out). The lead board shows which campaign a lead answered.
 - Daily limit for the number: 100 a day in week 1, +50 a day each week, up to a ceiling
   (default 250), changed on the dashboard. Only inside the customer send window. The job
   `POST /jobs/send-campaigns` sends a small batch every 10 minutes.
