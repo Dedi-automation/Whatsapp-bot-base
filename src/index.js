@@ -203,6 +203,7 @@ function createBot(options) {
     optOut: outbound
       ? { isOptOutText: outbound.isOptOutText, recordOptOut: outbound.recordOptOut, replyText: outbound.optOutReplyText }
       : undefined,
+    onCustomerText: outbound ? outbound.recordReply : undefined,
     log,
   });
 

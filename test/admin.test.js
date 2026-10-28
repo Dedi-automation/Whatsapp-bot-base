@@ -362,6 +362,19 @@ test('campaign from the dashboard: create, upload a Windows-1255 CSV file, start
 
   const filtered = await (await app.request(`${path}?status=failed`, { headers: { cookie } })).text();
   assert.ok(!filtered.includes('972501234567'));
+
+  // The agent sees who answered and what, with a link to the conversation.
+  await app.outbound.setStatus(id, 'start');
+  await app.outbound.runCampaigns();
+  await app.outbound.recordReply({ phone: '972527654321', text: `מעוניין ${XSS}` });
+  await app.storage.set('conversations', '972527654321', { customerPhone: '972527654321', status: 'new', campaignName: 'נוסעים' });
+  const replied = await (await app.request(`${path}?status=replied`, { headers: { cookie } })).text();
+  assert.ok(replied.includes('ענה: 1'));
+  assert.ok(replied.includes('href="/admin/leads/972527654321"'));
+  assert.ok(replied.includes('מעוניין &lt;script&gt;'));
+  assert.ok(!replied.includes('972531112222'));
+  const board = await (await app.request('/admin/leads', { headers: { cookie } })).text();
+  assert.ok(board.includes('<th>קמפיין</th>') && board.includes('נוסעים'));
 });
 
 test('upload: a multipart form is accepted only on the upload route, within 2 MB; empty upload is a clear error', async (t) => {

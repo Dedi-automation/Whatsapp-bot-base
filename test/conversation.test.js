@@ -343,3 +343,28 @@ test('T-21 outside the send window the opt-out is recorded with no confirmation'
   assert.ok(recorded.has('972500000000'));
   assert.equal(whatsapp.sent.length, 0);
 });
+
+test('campaign reply: onCustomerText marks the conversation with the campaign, then the AI answers as usual', async () => {
+  const built = build({ aiReplies: [{ text: 'שמח לעזור' }] });
+  const seen = [];
+  const engine = createConversationEngine({
+    storage: built.storage,
+    whatsapp: built.whatsapp,
+    ai: built.ai,
+    deduplicator: createDeduplicator({ storage: built.storage }),
+    isWithinSendWindow: () => true,
+    now: () => new Date('2026-10-25T10:00:00Z'),
+    unsupportedReplyText: 'x',
+    systemPrompt: 'system',
+    tool: TOOL,
+    onCustomerText: async (input) => {
+      seen.push(input);
+      return { campaignId: 'c1', campaignName: 'נסיעות' };
+    },
+  });
+  const out = await engine.handleIncoming({ kind: 'text', messageId: 'r1', from: '972500000000', text: 'מעוניין' });
+  assert.equal(out.status, 'replied');
+  assert.deepEqual(seen, [{ phone: '972500000000', text: 'מעוניין', optedOut: false }]);
+  const conv = await built.storage.get('conversations', '972500000000');
+  assert.deepEqual([conv.campaignId, conv.campaignName], ['c1', 'נסיעות']);
+});
