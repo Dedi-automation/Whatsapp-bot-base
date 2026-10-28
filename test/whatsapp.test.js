@@ -124,3 +124,50 @@ test('downloadMedia fails with a WhatsAppError on an API error or a non-https UR
   const httpUrl = createWhatsAppClient({ token: 'tok', phoneNumberId: '123', fetch: stubFetch(200, { url: 'http://insecure.example/f' }).fn });
   await assert.rejects(() => httpUrl.downloadMedia({ mediaId: 'x' }), WhatsAppError);
 });
+
+// ---- base 1.1.0: outbound campaigns ----
+
+test('sendTemplate adds the URL button parameter when the template has one', async () => {
+  const { fn, calls } = stubFetch(200, { messages: [{ id: 'wamid.tpl' }] });
+  const client = createWhatsAppClient({ token: 'tok', phoneNumberId: '123', fetch: fn });
+  await client.sendTemplate({ to: '972500000000', templateName: 'signup', language: 'he', params: [], urlButtonParam: 'abc' });
+  assert.deepEqual(JSON.parse(calls[0].init.body).template, {
+    name: 'signup',
+    language: { code: 'he' },
+    components: [{ type: 'button', sub_type: 'url', index: '0', parameters: [{ type: 'text', text: 'abc' }] }],
+  });
+});
+
+test('parseEvents reads statuses, quality and template updates; parseIncoming ignores them', () => {
+  const client = createWhatsAppClient({ token: 'tok', phoneNumberId: '123', fetch: async () => { throw new Error('no network'); } });
+  const payload = {
+    entry: [
+      {
+        changes: [
+          {
+            field: 'messages',
+            value: {
+              statuses: [
+                { id: 'wamid.a', status: 'delivered', recipient_id: '972500000000' },
+                { id: 'wamid.b', status: 'failed', recipient_id: '972500000001', errors: [{ code: 131026, title: 'Message undeliverable' }] },
+                { status: 'read' },
+              ],
+            },
+          },
+          { field: 'phone_number_quality_update', value: { display_phone_number: '1', event: 'FLAGGED', current_limit: 'TIER_250' } },
+          { field: 'message_template_status_update', value: { event: 'PAUSED', message_template_name: 'offer', reason: 'low quality' } },
+          { field: 'message_template_quality_update', value: { new_quality_score: 'RED', message_template_name: 'offer' } },
+        ],
+      },
+    ],
+  };
+  assert.deepEqual(client.parseEvents(payload), [
+    { kind: 'status', messageId: 'wamid.a', status: 'delivered', recipient: '972500000000', errorCode: null, errorTitle: null },
+    { kind: 'status', messageId: 'wamid.b', status: 'failed', recipient: '972500000001', errorCode: 131026, errorTitle: 'Message undeliverable' },
+    { kind: 'quality', event: 'FLAGGED', currentLimit: 'TIER_250' },
+    { kind: 'template', event: 'PAUSED', templateName: 'offer', reason: 'low quality' },
+    { kind: 'template', event: 'RED', templateName: 'offer', reason: 'quality' },
+  ]);
+  assert.deepEqual(client.parseIncoming(payload), []);
+  assert.deepEqual(client.parseEvents(null), []);
+});

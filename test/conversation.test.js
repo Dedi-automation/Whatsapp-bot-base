@@ -294,3 +294,52 @@ test('media config is checked at startup: unknown type, missing texts, or no {ac
   assert.throws(() => build({ media: { ...ACCEPT_ID_PHOTO, mediaReceivedReplyText: undefined } }), /mediaReceivedReplyText is required/);
   assert.throws(() => build({ media: { ...ACCEPT_ID_PHOTO, mediaRejectedReplyText: 'no placeholder' } }), /\{accepted\} is required/);
 });
+
+// ---- base 1.1.0: opt-out (decisions.md item 49, T-21) ----
+
+function buildWithOptOut({ withinWindow = true } = {}) {
+  const built = build({ withinWindow, aiReplies: [{ text: 'תשובה' }] });
+  const recorded = new Set();
+  const engine = createConversationEngine({
+    storage: built.storage,
+    whatsapp: built.whatsapp,
+    ai: built.ai,
+    deduplicator: createDeduplicator({ storage: built.storage }),
+    isWithinSendWindow: () => withinWindow,
+    now: () => new Date('2026-10-25T10:00:00Z'),
+    unsupportedReplyText: 'x',
+    systemPrompt: 'system',
+    tool: TOOL,
+    optOut: {
+      isOptOutText: (t) => t.trim() === 'הסר',
+      recordOptOut: async ({ phone }) => {
+        const added = !recorded.has(phone);
+        recorded.add(phone);
+        return added;
+      },
+      replyText: 'הוסרת.',
+    },
+  });
+  return { ...built, engine, recorded };
+}
+
+test('T-21 an opt-out word is recorded, confirmed once, and does not reach the AI', async () => {
+  const { engine, whatsapp, ai, recorded, storage } = buildWithOptOut();
+  const first = await engine.handleIncoming({ kind: 'text', messageId: 'o1', from: '972500000000', text: 'הסר' });
+  const again = await engine.handleIncoming({ kind: 'text', messageId: 'o2', from: '972500000000', text: 'הסר' });
+  assert.deepEqual([first.status, again.status], ['opted_out', 'opted_out']);
+  assert.ok(recorded.has('972500000000'));
+  assert.deepEqual(whatsapp.sent.map((s) => s.text), ['הוסרת.']);
+  assert.equal(ai.calls ? ai.calls.length : 0, 0);
+  assert.equal((await storage.get('conversations', '972500000000')).optedOut, true);
+  const normal = await engine.handleIncoming({ kind: 'text', messageId: 'o3', from: '972500000000', text: 'שאלה' });
+  assert.equal(normal.status, 'replied');
+});
+
+test('T-21 outside the send window the opt-out is recorded with no confirmation', async () => {
+  const { engine, whatsapp, recorded } = buildWithOptOut({ withinWindow: false });
+  const out = await engine.handleIncoming({ kind: 'text', messageId: 'o1', from: '972500000000', text: 'הסר' });
+  assert.equal(out.status, 'opted_out');
+  assert.ok(recorded.has('972500000000'));
+  assert.equal(whatsapp.sent.length, 0);
+});

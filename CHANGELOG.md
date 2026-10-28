@@ -3,6 +3,24 @@
 Bots pin a tag (README.md). Every version passes T-01 to T-17 and the DRY RUN (T-09)
 before it is tagged (documents/test-plan.md). Details per change: documents/project-log.md.
 
+## 1.1.0 - 2026-10-28
+
+Outbound messages for every bot (decisions.md items 46 to 51). Bots on 1.0.0 are not
+affected until they upgrade; without the new `outbound` option nothing changes.
+
+- Signup link: the dashboard sends a Meta-approved template with the link to one phone.
+- Campaigns: upload a CSV or pasted list (Hebrew Excel CSV is read correctly), start and
+  pause, status per recipient (waiting, sent, delivered, read, failed, opted out).
+- Daily limit for the number: 100 a day in week 1, +50 a day each week, up to a ceiling
+  (default 250), changed on the dashboard. Only inside the customer send window. The job
+  `POST /jobs/send-campaigns` sends a small batch every 10 minutes.
+- Opt-out: "הסר", "לא מעוניין" and similar words, or the template's quick-reply button,
+  stop all outbound messages to that phone for good.
+- Automatic pause and an alert to the owner (new notification event `campaign_alert`) on
+  Meta limit errors, quality warnings, paused templates or ten failures in a row.
+- WhatsApp client: `parseEvents` (statuses, quality, template updates), URL button
+  parameter in `sendTemplate`. Tests T-18 to T-24.
+
 ## 1.0.0 - 2026-10-26
 
 First release of the base (stages 0 to 2 in documents/spec.md section 8).

@@ -9,7 +9,8 @@
 // - Events: 'handoff' (a customer asked for an agent), 'daily_summary' (the day's
 //   summary, sent by the scheduler at 18:15; on Thursday it also holds the week),
 //   'monthly_summary' (the previous month, on the 1st, after the daily summary),
-//   'recommendation' (a prompt improvement from test mode, waiting for the owner).
+//   'recommendation' (a prompt improvement from test mode, waiting for the owner),
+//   'campaign_alert' (a campaign paused by a Meta warning, or finished; base 1.1.0).
 // - These messages go to the agent or owner, not to customers, so they are sent at
 //   any hour, like health alerts (decisions.md item 36). 18:15 is after the 17:50
 //   customer window on purpose.
@@ -25,12 +26,12 @@
 
 const { notifyEmail } = require('./email');
 
-const EVENTS = Object.freeze(['handoff', 'daily_summary', 'monthly_summary', 'recommendation']);
+const EVENTS = Object.freeze(['handoff', 'daily_summary', 'monthly_summary', 'recommendation', 'campaign_alert']);
 // Meta template parameters may not contain new lines, tabs or more than 4 spaces in a row.
 const TEMPLATE_PARAM_MAX = 1000;
 
 /**
- * @typedef {'handoff' | 'daily_summary' | 'monthly_summary' | 'recommendation'} NotifyEvent
+ * @typedef {'handoff' | 'daily_summary' | 'monthly_summary' | 'recommendation' | 'campaign_alert'} NotifyEvent
  *
  * @typedef {Object} NotifyResult
  * @property {NotifyEvent} event

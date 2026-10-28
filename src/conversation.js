@@ -22,6 +22,10 @@
 //   trial collects feedback, the tester's text goes to testMode.handleAnswer and media to
 //   testMode.handleMedia, not to the AI. When the last answer closes the trial, the
 //   optional onTrialClosed hook runs (stage 2: prompt recommendations + email).
+// - opt-out (base 1.1.0, decisions.md item 49): when the bot sends outbound messages,
+//   a text that is an opt-out word ("הסר", "לא מעוניין", or the template's quick-reply
+//   button) puts the phone on the opt-out list and does not go to the AI. The customer
+//   gets one confirmation, inside the send window.
 //
 // Transcript: one record per message in collection 'messages', ID `${conversationId}:${seq}`.
 // Per-message records avoid the single-cell size problem (F-27).
@@ -42,7 +46,7 @@ const MAX_MEDIA_BYTES = 700 * 1024;
 
 /**
  * @typedef {Object} Outcome
- * @property {'replied' | 'handoff' | 'duplicate' | 'outside_window' | 'unsupported_reply' | 'media_received' | 'media_rejected' | 'test_trial_ended' | 'test_feedback'} status
+ * @property {'replied' | 'handoff' | 'duplicate' | 'outside_window' | 'unsupported_reply' | 'media_received' | 'media_rejected' | 'test_trial_ended' | 'test_feedback' | 'opted_out'} status
  * @property {string} conversationId
  */
 
@@ -68,6 +72,11 @@ const MAX_MEDIA_BYTES = 700 * 1024;
  *     module: ReturnType<typeof import('./test-mode').createTestMode>,
  *     onTrialClosed?: (trialId: string) => Promise<void>
  *   },
+ *   optOut?: {
+ *     isOptOutText: (text: string) => boolean,
+ *     recordOptOut: (input: {phone: string, source: string}) => Promise<boolean>,
+ *     replyText: string
+ *   },
  *   log?: {info: (...args: unknown[]) => void, error: (...args: unknown[]) => void}
  * }} deps
  *   acceptedMediaTypes: media types this bot accepts, from 'image', 'audio', 'video',
@@ -82,7 +91,10 @@ const MAX_MEDIA_BYTES = 700 * 1024;
 function createConversationEngine(deps) {
   const { storage, whatsapp, ai, deduplicator, isWithinSendWindow, now, unsupportedReplyText, systemPrompt, tool } = deps;
   const { acceptedMediaTypes = [], mediaReceivedReplyText, mediaRejectedReplyText, mediaTypeLabels = {} } = deps;
-  const { onHandoff, testMode, log = console } = deps;
+  const { onHandoff, testMode, optOut, log = console } = deps;
+  if (optOut && (typeof optOut.isOptOutText !== 'function' || typeof optOut.recordOptOut !== 'function' || typeof optOut.replyText !== 'string' || optOut.replyText.trim() === '')) {
+    throw new TypeError('optOut needs isOptOutText, recordOptOut and replyText');
+  }
   if (testMode) {
     if (!Array.isArray(testMode.phones) || testMode.phones.length === 0) throw new TypeError('testMode.phones is required');
     if (typeof testMode.endKeyword !== 'string' || testMode.endKeyword.trim() === '') throw new TypeError('testMode.endKeyword is required');
@@ -231,6 +243,13 @@ function createConversationEngine(deps) {
       // outside the send window: nothing is sent to the customer here.
       const isAccepted = message.kind !== 'text' && message.media && accepted.has(message.mediaType);
       if (isAccepted) await storeMedia(conversationId, seq, message.media);
+
+      if (optOut && message.kind === 'text' && optOut.isOptOutText(message.text)) {
+        const added = await optOut.recordOptOut({ phone: message.from, source: 'keyword' });
+        await updateConversation(conversationId, (current) => ({ ...current, optedOut: true, optedOutAt: receivedAt.toISOString() }));
+        if (added && isWithinSendWindow(receivedAt)) await send(conversationId, message.from, optOut.replyText);
+        return { status: 'opted_out', conversationId };
+      }
 
       if (!isWithinSendWindow(receivedAt)) {
         return { status: 'outside_window', conversationId };

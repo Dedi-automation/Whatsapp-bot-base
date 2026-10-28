@@ -188,3 +188,25 @@ Dedi, 2026-10-26: "continue to stage 3 and finish the base". Decision 45.
 - Tag: `v1.0.0` on main after this entry is merged.
 - Rollback point: main 27e228d (before notifications) or 6b6925f (before stage 3). A bot pinned to v1.0.0 is not affected by later base changes.
 - Moved to stage 4 (first bot, travel insurance): real WhatsApp and SendGrid checks (test keys, public URL), Meta template for agent WhatsApp outside 24 hours, scheduler jobs (18:15 digest), read access to this private repository for the bot's install.
+
+## 2026-10-28 - base 1.1.0, outbound messages - feature/outbound-campaigns
+
+Dedi, 2026-10-28: every bot can send a customer a signup link by hand, or send an approved marketing template to a list (for example the agent's 5,000 existing customers), 100 a day in week 1 and +50 a day each week until the number proves stable; the template is approved by Meta and a customer can answer "not interested". Decisions 46 to 51.
+
+- `src/outbound.js`: signup link, campaigns, daily limit with weekly ramp (shared by the number, default ceiling 250, editable), send window, opt-out list, automatic pause with a `campaign_alert` to the owner, recipient status from Meta.
+- Dashboard: "הודעות יזומות" page, campaign page (CSV upload incl. Hebrew Windows-1255, start, pause, status filter), opt-out list. Upload is the only multipart form (2 MB).
+- Conversation engine: opt-out words never reach the AI; one confirmation inside the window.
+- WhatsApp client: `parseEvents` (statuses, number quality, template status and quality), URL button parameter. Server passes events to the outbound module.
+- New tests T-18 to T-24; the release check now covers T-01 to T-24. DRY RUN has 10 new checks.
+
+### Test runs on the branch
+
+| Date (UTC) | Commit | Where | Command | Result |
+|---|---|---|---|---|
+| 2026-10-28 10:14 | f2d8e5d (main, baseline) | cloud session, Firestore emulator | `npm test` | 259 tests, 259 pass, 0 fail, 0 skipped, 0 todo |
+| 2026-10-28 10:24 | 39e12a6 | cloud session, Firestore emulator | `node scripts/release-check.js` | T-01 to T-24 all pass; 290 tests, 290 pass, 0 fail, 0 skipped, 0 todo; RELEASE CHECK PASS |
+| 2026-10-28 10:24 | 39e12a6 | cloud session, Firestore emulator | `node scripts/dry-run.js` (T-09) | 36 checks pass; 29 messages would have been sent; nothing was sent |
+| 2026-10-28 10:24 | 39e12a6 | cloud session, in-memory storage | `node scripts/dry-run.js` (T-09) | 36 checks pass |
+
+- Rollback point: main f2d8e5d (tag v1.0.0). Bots pinned to v1.0.0 are not affected.
+- Before a bot uses it live: Meta-approved signup and marketing templates (with a "לא מעוניין" quick reply), scheduler job `send-campaigns` every 10 minutes, webhook fields `phone_number_quality_update`, `message_template_status_update`, `message_template_quality_update` subscribed in the Meta app.

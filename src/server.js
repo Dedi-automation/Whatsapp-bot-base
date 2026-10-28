@@ -9,6 +9,9 @@
 //   POST /jobs/<name>        scheduled jobs; job token in the Authorization header (T-16)
 //   /admin/...               admin dashboard (B11, src/admin.js), when an admin handler is passed
 //
+// The webhook also passes Meta's statuses, quality and template updates to onEvents
+// (outbound campaigns, base 1.1.0), after the messages.
+//
 // Not in the base: /test-sheet (F-26), /billing/*, /demo-intake.
 //
 // Logs never contain message text, phone numbers or tokens.
@@ -26,13 +29,14 @@ const JOB_NAME = /^[a-z0-9-]+$/;
  *   engine: {handleIncoming: (message: import('./whatsapp').IncomingMessage) => Promise<import('./conversation').Outcome>},
  *   jobs?: Record<string, () => Promise<unknown>>,
  *   admin?: {handle: (req: import('node:http').IncomingMessage, res: import('node:http').ServerResponse) => Promise<void>},
+ *   onEvents?: (events: import('./whatsapp').WebhookEvent[]) => Promise<unknown>,
  *   log?: {info: (...args: unknown[]) => void, error: (...args: unknown[]) => void}
  * }} deps
  *   jobs: handlers by route name, for example {'send-reminders': fn}. Branch D supplies them.
  * @returns {import('node:http').Server}
  */
 function createServer(deps) {
-  const { config, whatsapp, engine, jobs = {}, admin, log = console } = deps;
+  const { config, whatsapp, engine, jobs = {}, admin, onEvents, log = console } = deps;
 
   async function handle(req, res) {
     const url = new URL(req.url, 'http://localhost');
@@ -112,7 +116,17 @@ function createServer(deps) {
         log.error(`webhook: ${message.messageId} failed: ${err.name}: ${err.message}`);
       }
     }
-    return send(res, 200, { received: results.length, results });
+    let events = 0;
+    if (onEvents && typeof whatsapp.parseEvents === 'function') {
+      try {
+        const parsed = whatsapp.parseEvents(payload);
+        events = parsed.length;
+        if (events > 0) await onEvents(parsed);
+      } catch (err) {
+        log.error(`webhook: events failed: ${err.name}: ${err.message}`);
+      }
+    }
+    return send(res, 200, onEvents ? { received: results.length, results, events } : { received: results.length, results });
   }
 
   async function runJob(req, res, name) {

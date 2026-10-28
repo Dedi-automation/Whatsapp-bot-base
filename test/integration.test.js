@@ -140,3 +140,53 @@ test('createBot: on the 1st the digest job also sends the previous month summary
   assert.deepEqual(email.sent.map((m) => m.subject.split(' - ')[0]), ['סיכום יומי', 'סיכום חודשי']);
   assert.match(email.sent[1].text, /בנפרד מ-Grow/);
 });
+
+// ---- base 1.1.0: outbound campaigns wired by createBot ----
+
+const OUTBOUND = {
+  optOutReplyText: 'הוסרת מהרשימה.',
+  signup: { template: { name: 'signup_link', language: 'he' }, link: 'https://example.com/join' },
+  templates: { travel: { name: 'travel_offer', language: 'he', params: ['{name}'] } },
+  fallbacks: { name: 'לקוח' },
+};
+
+test('createBot with outbound: send-campaigns job, opt-out from the webhook, Meta statuses update recipients', async (t) => {
+  const crypto = require('node:crypto');
+  const whatsapp = createFakeWhatsAppClient();
+  const app = await startBot({ env: env(), whatsapp, ai: createFakeAiClient([]), outbound: OUTBOUND });
+  t.after(app.close);
+  const o = app.bot.outbound;
+  assert.ok(app.bot.jobs['send-campaigns']);
+  const id = await o.createCampaign({ name: 'נסיעות', templateKey: 'travel' });
+  await o.addRecipients(id, [{ phone: '0500000001', name: 'דנה' }, { phone: '0500000002' }, { phone: '0500000003' }]);
+  await o.setStatus(id, 'start');
+
+  const post = (payload) => {
+    const raw = JSON.stringify(payload);
+    const sig = 'sha256=' + crypto.createHmac('sha256', 'value-of-WHATSAPP_APP_SECRET').update(raw).digest('hex');
+    return fetch(`${app.base}/whatsapp-webhook`, { method: 'POST', body: raw, headers: { 'X-Hub-Signature-256': sig } }).then((r) => r.json());
+  };
+  // Customer 2 opts out before the campaign runs.
+  const out = await post({ messages: [{ kind: 'text', messageId: 'w1', from: '972500000002', text: 'לא מעוניין' }] });
+  assert.deepEqual(out.results, ['opted_out']);
+  assert.equal(whatsapp.sent.at(-1).text, 'הוסרת מהרשימה.');
+
+  const job = await fetch(`${app.base}/jobs/send-campaigns`, { method: 'POST', headers: { Authorization: 'Bearer value-of-SCHEDULED_JOB_TOKEN' } }).then((r) => r.json());
+  assert.equal(job.result.sent, 2);
+  const templates = whatsapp.sent.filter((s) => s.type === 'template');
+  assert.deepEqual(templates.map((s) => [s.to, s.params[0]]), [['972500000001', 'דנה'], ['972500000003', 'לקוח']]);
+
+  const ev = await post({ events: [{ kind: 'status', messageId: templates[0].messageId, status: 'read' }, { kind: 'quality', event: 'FLAGGED', currentLimit: 'TIER_250' }] });
+  assert.equal(ev.events, 2);
+  const list = await o.listRecipients(id);
+  assert.deepEqual(list.map((r) => r.data.status), ['read', 'opted_out', 'sent']);
+  // Every recipient was handled, so the campaign is done before the warning arrives.
+  assert.equal((await o.getCampaign(id)).status, 'done');
+});
+
+test('createBot without outbound: no campaign job, opt-out words go to the AI as usual', async (t) => {
+  const app = await startBot({ env: env(), ai: createFakeAiClient([{ text: 'בסדר' }]) });
+  t.after(app.close);
+  assert.equal(app.bot.outbound, null);
+  assert.equal(app.bot.jobs['send-campaigns'], undefined);
+});

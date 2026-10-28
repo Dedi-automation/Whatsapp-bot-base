@@ -16,6 +16,11 @@
 // by the scheduler at 18:15; on Thursday it adds the week, on the 1st a summary of
 // the previous month follows; the invoice comes from Grow in its own email), and each prompt recommendation from a closed test-mode
 // trial. Links point to the dashboard and carry no token.
+//
+// Base 1.1.0: when the bot passes `outbound`, the dashboard can send a signup link and
+// run campaigns (src/outbound.js), opt-out words from customers are recorded, the job
+// POST /jobs/send-campaigns sends the next batch (scheduler: every 10 minutes), and
+// Meta's statuses and quality warnings from the webhook update recipients or pause.
 
 const { loadConfig } = require('./config');
 const { createDeduplicator } = require('./security');
@@ -31,6 +36,7 @@ const { createEmailClient, recommendationEmail } = require('./email');
 const { createNotifier } = require('./notify');
 const { buildDigest } = require('./daily-summary');
 const { createJobRunner } = require('./jobs');
+const { createOutbound } = require('./outbound');
 
 const DEFAULT_LEAD_STATUSES = Object.freeze(['new', 'in_progress', 'handoff', 'closed']);
 
@@ -51,6 +57,15 @@ const DEFAULT_LEAD_STATUSES = Object.freeze(['new', 'in_progress', 'handoff', 'c
  *   schema?: import('./schema').Schema,
  *   leadFields?: string[],
  *   testMode?: {phones: string[], endKeyword: string, questions: string[], closingText: string},
+ *   outbound?: {
+ *     optOutReplyText: string,
+ *     signup?: {template: import('./outbound').TemplateDef, link: string},
+ *     templates?: Record<string, import('./outbound').TemplateDef>,
+ *     optOutKeywords?: string[],
+ *     fallbacks?: {name?: string},
+ *     ramp?: Partial<import('./outbound').Ramp>,
+ *     batchPerRun?: number
+ *   },
  *   email?: import('./email').EmailClient,
  *   env?: Record<string, string | undefined>,
  *   storage?: import('./storage').Storage,
@@ -69,6 +84,9 @@ const DEFAULT_LEAD_STATUSES = Object.freeze(['new', 'in_progress', 'handoff', 'c
  *   in_progress, handoff, closed. schema and leadFields: dashboard columns by field ID (F-12).
  *   testMode: tester phones, the end keyword and the 4 to 6 feedback questions (per bot).
  *   monthlyNote: one line for the monthly summary, for example "the invoice is sent separately by Grow".
+ *   outbound: Meta-approved templates for the signup link and for campaigns, the opt-out
+ *   confirmation text, and optionally the opt-out words and the daily limit defaults
+ *   (src/outbound.js). Without it the bot sends no outbound messages.
  * @returns {{config: import('./config').Config, server: import('node:http').Server, testMode: object | null, listen: () => Promise<number>}}
  *   listen resolves with the port in use.
  */
@@ -160,6 +178,10 @@ function createBot(options) {
     }
   }
 
+  const outbound = options.outbound
+    ? createOutbound({ ...options.outbound, storage, whatsapp, isWithinSendWindow: inWindow, now, notifier, botName, log })
+    : null;
+
   const engine = createConversationEngine({
     storage,
     whatsapp,
@@ -178,6 +200,9 @@ function createBot(options) {
     testMode: testMode
       ? { phones: options.testMode.phones, endKeyword: options.testMode.endKeyword, module: testMode, onTrialClosed }
       : undefined,
+    optOut: outbound
+      ? { isOptOutText: outbound.isOptOutText, recordOptOut: outbound.recordOptOut, replyText: outbound.optOutReplyText }
+      : undefined,
     log,
   });
 
@@ -186,6 +211,7 @@ function createBot(options) {
     storage,
     statuses: options.leadStatuses || DEFAULT_LEAD_STATUSES,
     testMode: testMode || undefined,
+    outbound: outbound || undefined,
     schema: options.schema,
     leadFields: options.leadFields,
     botName,
@@ -194,13 +220,16 @@ function createBot(options) {
   });
 
   // Base jobs first; a bot may add jobs or replace one by name.
-  const jobs = { 'send-daily-digest': sendDailyDigest, ...(options.jobs || {}) };
-  const server = createServer({ config, whatsapp, engine, jobs, admin, log: options.log });
+  const baseJobs = { 'send-daily-digest': sendDailyDigest };
+  if (outbound) baseJobs['send-campaigns'] = outbound.runCampaigns;
+  const jobs = { ...baseJobs, ...(options.jobs || {}) };
+  const server = createServer({ config, whatsapp, engine, jobs, admin, onEvents: outbound ? outbound.handleEvents : undefined, log: options.log });
 
   return {
     config,
     server,
     testMode,
+    outbound,
     notifier,
     jobs,
     listen: () =>
