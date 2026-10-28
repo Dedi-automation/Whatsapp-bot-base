@@ -335,6 +335,12 @@ async function runDryRun(options = {}) {
     const afterStatus = await bot.outbound.listRecipients(campaignId);
     check('T-24 Meta statuses update recipients (delivered, failed with reason)', afterStatus[0].data.status === 'delivered' && afterStatus[1].data.status === 'opted_out' && afterStatus[2].data.status === 'failed' && /131026/.test(afterStatus[2].data.error));
 
+    aiQueue.push({ text: 'מעולה! לאן אתם נוסעים?' });
+    const reply = await deliver('972500000021', text('כן, מעוניינת. כמה זה עולה?'));
+    const repliedRec = (await bot.outbound.listRecipients(campaignId))[0];
+    const replyLead = await storage.get('conversations', '972500000021');
+    check('campaign reply: recipient marked "replied" with the text, lead tagged with the campaign, AI answers', reply.results[0] === 'replied' && repliedRec.data.status === 'replied' && repliedRec.data.reply.includes('מעוניינת') && replyLead.campaignName === 'לקוחות קיימים');
+
     const secondCampaign = await bot.outbound.createCampaign({ name: 'שני', templateKey: 'travel' });
     await bot.outbound.addRecipients(secondCampaign, [{ phone: '0500000031' }, { phone: '0500000032' }]);
     await bot.outbound.setStatus(secondCampaign, 'start');
@@ -350,7 +356,7 @@ async function runDryRun(options = {}) {
     check('T-20 campaign job on Friday: outside the window, nothing sent', friday.result.status === 'outside_window' && sentSince(mark).length === 0);
     clock = new Date('2026-10-26T11:00:00Z');
     const campaignPage = await (await fetch(`${base}${campaignPath}`, { headers: { cookie } })).text();
-    check('campaign page shows the status of each recipient', campaignPage.includes('נמסר: 1') && campaignPage.includes('הוסר לפי בקשה: 1') && campaignPage.includes('נכשל: 1'));
+    check('campaign page shows the status of each recipient', campaignPage.includes('ענה: 1') && campaignPage.includes('הוסר לפי בקשה: 1') && campaignPage.includes('נכשל: 1'));
 
     check('no AI request was left unanswered', aiQueue.length === 0);
   } finally {

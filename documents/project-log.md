@@ -207,6 +207,11 @@ Dedi, 2026-10-28: every bot can send a customer a signup link by hand, or send a
 | 2026-10-28 10:24 | 39e12a6 | cloud session, Firestore emulator | `node scripts/release-check.js` | T-01 to T-24 all pass; 290 tests, 290 pass, 0 fail, 0 skipped, 0 todo; RELEASE CHECK PASS |
 | 2026-10-28 10:24 | 39e12a6 | cloud session, Firestore emulator | `node scripts/dry-run.js` (T-09) | 36 checks pass; 29 messages would have been sent; nothing was sent |
 | 2026-10-28 10:24 | 39e12a6 | cloud session, in-memory storage | `node scripts/dry-run.js` (T-09) | 36 checks pass |
+| 2026-10-28 | 39e12a6 | GitHub Actions | workflow `test` (emulator) | 290 tests, 290 pass, 0 fail, 0 skipped |
+| 2026-10-28 11:10 | cfcb9a7 | cloud session, Firestore emulator | `node scripts/release-check.js` | T-01 to T-24 all pass; 293 tests, 293 pass, 0 fail, 0 skipped, 0 todo; RELEASE CHECK PASS |
+| 2026-10-28 11:10 | cfcb9a7 | cloud session, Firestore emulator and in-memory | `node scripts/dry-run.js` (T-09) | 37 checks pass; 30 messages would have been sent; nothing was sent |
+
+- Added cfcb9a7 (Dedi, 2026-10-28: the agent sees on the board who answered and what): a reply from a contacted customer marks the recipient "replied" with the text and a link to the conversation; the lead board gets a campaign column. Decision 52: the campaign screen is in every bot's dashboard; lists come from an upload or, per bot, from the client's CRM.
 
 - Rollback point: main f2d8e5d (tag v1.0.0). Bots pinned to v1.0.0 are not affected.
 - Before a bot uses it live: Meta-approved signup and marketing templates (with a "לא מעוניין" quick reply), scheduler job `send-campaigns` every 10 minutes, webhook fields `phone_number_quality_update`, `message_template_status_update`, `message_template_quality_update` subscribed in the Meta app.

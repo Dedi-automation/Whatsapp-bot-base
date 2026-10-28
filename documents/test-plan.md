@@ -33,7 +33,7 @@ Every release must pass all tests below before it is tagged. Tests marked TO VER
 - T-21 Opt-out: an opt-out word or the template's "not interested" button is recorded, confirmed once, does not reach the AI, and the phone gets no campaign or signup message again. (outbound, B7)
 - T-22 Automatic pause: a Meta limit or block error, a quality warning on the number, a paused or red template, or ten failed sends in a row pause the campaign and alert the owner; the recipient is sent after a person resumes. (outbound)
 - T-23 One send per recipient: overlapping job runs, duplicate rows and uploads never send twice to the same phone in a campaign. (outbound)
-- T-24 Recipient status: Meta's delivered, read and failed statuses update the recipient, forward only, with the failure reason. (outbound, B5)
+- T-24 Recipient status: Meta's delivered, read and failed statuses update the recipient, forward only, with the failure reason; a customer's reply marks the recipient "replied" with the text and tags the lead with the campaign. (outbound, B5, B7)
 
 ## Release procedure
 

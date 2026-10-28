@@ -333,3 +333,34 @@ test('T-24 a failed status with a Meta limit code pauses the campaign', async ()
   assert.equal(out.paused, 1);
   assert.equal((await o.getCampaign(id)).status, 'paused_auto');
 });
+
+// ---- replies (Dedi, 2026-10-28: the agent sees who answered and what) ----
+
+test('T-24 a reply from a contacted customer marks them "replied" with the text; not-yet-sent customers stay waiting', async () => {
+  const { outbound: o } = setup({ batchPerRun: 1 });
+  const id = await runningCampaign(o, phones(2));
+  await o.runCampaigns(); // only the first is sent
+  const source = await o.recordReply({ phone: '972500000000', text: 'כן, מעוניין. כמה זה עולה?' });
+  assert.deepEqual(source, { campaignId: id, campaignName: 'קמפיין' });
+  assert.equal(await o.recordReply({ phone: '972500000001', text: 'מי זה?' }), null);
+  assert.equal(await o.recordReply({ phone: '972599999999', text: 'שלום' }), null);
+  const list = await o.listRecipients(id);
+  assert.deepEqual([list[0].data.status, list[0].data.reply], ['replied', 'כן, מעוניין. כמה זה עולה?']);
+  assert.equal(list[1].data.status, 'pending');
+  // A later Meta "read" status does not move a replied recipient back.
+  await o.handleEvents([{ kind: 'status', messageId: list[0].data.messageId, status: 'read' }]);
+  assert.equal((await o.listRecipients(id))[0].data.status, 'replied');
+});
+
+test('T-21 an opt-out reply marks the recipient opted out, also in a campaign that has not sent yet', async () => {
+  const { outbound: o, whatsapp } = setup({ batchPerRun: 1 });
+  const id = await runningCampaign(o, phones(2));
+  await o.runCampaigns();
+  await o.recordReply({ phone: '972500000000', text: 'הסר', optedOut: true });
+  await o.recordReply({ phone: '972500000001', text: 'הסר', optedOut: true });
+  await o.recordOptOut({ phone: '972500000001', source: 'keyword' });
+  await o.runCampaigns();
+  const list = await o.listRecipients(id);
+  assert.deepEqual(list.map((r) => r.data.status), ['opted_out', 'opted_out']);
+  assert.equal(whatsapp.sent.length, 1);
+});

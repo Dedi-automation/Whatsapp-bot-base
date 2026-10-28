@@ -44,7 +44,7 @@ const MAX_RECIPIENT_ROWS = 500;
 const UPLOAD_PATH = /^\/admin\/campaigns\/[^/]+\/recipients$/;
 
 const CAMPAIGN_STATUS = { draft: 'טיוטה', running: 'פועל', paused: 'מושהה', paused_auto: 'נעצר אוטומטית', done: 'הסתיים' };
-const RECIPIENT_STATUS = { pending: 'ממתין', sent: 'נשלח', delivered: 'נמסר', read: 'נקרא', failed: 'נכשל', opted_out: 'הוסר לפי בקשה' };
+const RECIPIENT_STATUS = { pending: 'ממתין', sent: 'נשלח', delivered: 'נמסר', read: 'נקרא', replied: 'ענה', failed: 'נכשל', opted_out: 'הוסר לפי בקשה' };
 const SIGNUP_RESULT = {
   sent: 'הלינק נשלח.',
   invalid_phone: 'מספר הטלפון לא תקין.',
@@ -115,6 +115,8 @@ function createAdmin(deps) {
     throw new TypeError('statuses must be a non-empty list of lead statuses');
   }
   const leadFields = resolveLeadFields(schema, leadsTab, deps.leadFields);
+  // With campaigns and the default columns, the board shows which campaign a lead answered.
+  if (outbound && !schema) leadFields.push(['campaignName', 'קמפיין']);
 
   // ---- session cookie and CSRF ----
 
@@ -525,9 +527,11 @@ ${action ? html`<form method="post" action="/admin/campaigns/${encodeURIComponen
 </form>
 <h2>נמענים${filter ? html` (${RECIPIENT_STATUS[filter] || filter})` : ''}</h2>
 ${shown.length > MAX_RECIPIENT_ROWS ? html`<p>מוצגים ${MAX_RECIPIENT_ROWS} הראשונים מתוך ${shown.length}.</p>` : ''}
-<table><thead><tr><th>#</th><th>טלפון</th><th>שם</th><th>מצב</th><th>נשלח</th><th>שגיאה</th></tr></thead><tbody>${shown
+<table><thead><tr><th>#</th><th>טלפון</th><th>שם</th><th>מצב</th><th>נשלח</th><th>תשובה</th><th>שגיאה</th></tr></thead><tbody>${shown
         .slice(0, MAX_RECIPIENT_ROWS)
-        .map((r) => html`<tr><td>${r.data.index + 1}</td><td>${r.data.phone}</td><td>${r.data.name}</td><td>${RECIPIENT_STATUS[r.data.status] || r.data.status}</td><td>${r.data.sentAt}</td><td>${r.data.error}</td></tr>`)}</tbody></table>`,
+        .map(
+          (r) => html`<tr${r.data.status === 'replied' ? raw(' class="action"') : ''}><td>${r.data.index + 1}</td><td>${r.data.reply !== undefined ? html`<a href="/admin/leads/${encodeURIComponent(r.data.phone)}">${r.data.phone}</a>` : r.data.phone}</td><td>${r.data.name}</td><td>${RECIPIENT_STATUS[r.data.status] || r.data.status}</td><td>${r.data.sentAt}</td><td>${r.data.reply}</td><td>${r.data.error}</td></tr>`
+        )}</tbody></table>`,
       csrf
     );
   }
@@ -664,7 +668,7 @@ ${body}
 function resolveLeadFields(schema, tab, fieldIds) {
   if (!schema) {
     if (fieldIds) throw new TypeError('leadFields needs a schema for the labels');
-    return DEFAULT_LEAD_FIELDS;
+    return [...DEFAULT_LEAD_FIELDS];
   }
   const ids = fieldIds || Object.keys((schema[tab] && schema[tab].fields) || {});
   // headerFor throws SchemaError for an unknown field, so a typo fails at startup.

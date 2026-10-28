@@ -16,13 +16,16 @@
 //   an error, a quality warning on the number, a template paused/disabled/red, or ten
 //   failed sends in a row. Only a person resumes a campaign. The owner gets a
 //   'campaign_alert' notification.
+// - Replies (Dedi, 2026-10-28: the agent sees who answered and what): when a customer
+//   who got a campaign message writes back, the recipient becomes 'replied' with the
+//   text, and the conversation gets the campaign's name for the lead board.
 // - A recipient is sent at most once per campaign: the send lock (campaign_sends) is
 //   created atomically before the send, so two overlapping job runs cannot both send.
 //
 // Records:
 //   campaigns/<id>                       name, templateKey, status, progress counters
 //   campaign_recipients/<id>:<000001>    phone, name, status, messageId, error
-//   campaign_phones/<id>:<phone>         one phone once per campaign
+//   campaign_phones/<id>:<phone>         one phone once per campaign, and its recipient record
 //   campaign_sends/<id>:<000001>         send lock
 //   outbound_messages/<hash of wamid>    which recipient a Meta status belongs to
 //   outbound_days/<YYYY-MM-DD>           messages sent that day (Israel date)
@@ -59,7 +62,9 @@ const PLACEHOLDERS = new Set(['name', 'phone', 'link']);
 const PAUSE_CODES = new Set([4, 10, 190, 368, 80007, 130429, 130497, 131005, 131031, 131048, 132015, 132016]);
 const QUALITY_PAUSE = new Set(['FLAGGED', 'DOWNGRADE']);
 const TEMPLATE_PAUSE = new Set(['PAUSED', 'DISABLED', 'REJECTED', 'RED', 'FLAGGED']);
-const STATUS_RANK = { pending: 0, sent: 1, delivered: 2, read: 3 };
+const STATUS_RANK = { pending: 0, sent: 1, delivered: 2, read: 3, replied: 4 };
+const CONTACTED = new Set(['sent', 'delivered', 'read', 'replied']);
+const MAX_REPLY_CHARS = 500;
 
 /**
  * @typedef {{name: string, language: string, params?: string[], urlButtonParam?: string, label?: string}} TemplateDef
@@ -283,6 +288,8 @@ function createOutbound(deps) {
       while (!(await storage.createIfAbsent(RECIPIENTS, recipientId(campaignId, index), { campaignId, index, phone: r.phone, name: r.name, status: 'pending', addedAt: stamp() }))) {
         index += toAdd.length;
       }
+      // Lets a reply from this phone find its recipient record without reading the whole list.
+      await storage.set(PHONES, `${campaignId}:${r.phone}`, { at: stamp(), recipientId: recipientId(campaignId, index) });
       return index;
     });
     const current = await getCampaign(campaignId);
@@ -452,6 +459,34 @@ function createOutbound(deps) {
     return out.replace(/[\r\n\t]+/g, ' ').replace(/ {4,}/g, '   ').trim();
   }
 
+  // ---- replies from customers ----
+
+  /**
+   * A customer wrote to the bot. Each campaign that already sent them a message marks
+   * them 'replied' with the text ('opted_out' for an opt-out word). An opt-out also
+   * marks them in campaigns that have not sent yet.
+   * @returns {Promise<{campaignId: string, campaignName: string} | null>} the latest campaign that contacted them
+   */
+  async function recordReply({ phone, text, optedOut = false }) {
+    const to = normalizePhone(phone);
+    if (!to) return null;
+    let latest = null;
+    for (const c of await listCampaigns()) {
+      const link = await storage.get(PHONES, `${c.id}:${to}`);
+      if (!link || typeof link.recipientId !== 'string') continue;
+      const rec = await storage.get(RECIPIENTS, link.recipientId);
+      if (!rec) continue;
+      const contacted = CONTACTED.has(rec.status);
+      if (optedOut && rec.status !== 'opted_out' && (contacted || rec.status === 'pending')) {
+        await storage.set(RECIPIENTS, link.recipientId, { ...rec, status: 'opted_out', reply: String(text || '').slice(0, MAX_REPLY_CHARS), repliedAt: stamp() });
+      } else if (!optedOut && contacted) {
+        await storage.set(RECIPIENTS, link.recipientId, { ...rec, status: 'replied', reply: String(text || '').slice(0, MAX_REPLY_CHARS), repliedAt: stamp() });
+      }
+      if (contacted) latest = { campaignId: c.id, campaignName: c.data.name };
+    }
+    return latest;
+  }
+
   // ---- Meta webhook events ----
 
   /**
@@ -510,6 +545,7 @@ function createOutbound(deps) {
     isOptOutText,
     isOptedOut,
     recordOptOut,
+    recordReply,
     listOptOuts,
     getRamp,
     updateRamp,

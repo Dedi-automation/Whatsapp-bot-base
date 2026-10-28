@@ -26,6 +26,9 @@
 //   a text that is an opt-out word ("הסר", "לא מעוניין", or the template's quick-reply
 //   button) puts the phone on the opt-out list and does not go to the AI. The customer
 //   gets one confirmation, inside the send window.
+// - campaign replies (base 1.1.0): a text from a customer goes to the optional
+//   onCustomerText hook first; when a campaign had contacted them, the conversation
+//   gets campaignId and campaignName, so the lead board shows where the lead came from.
 //
 // Transcript: one record per message in collection 'messages', ID `${conversationId}:${seq}`.
 // Per-message records avoid the single-cell size problem (F-27).
@@ -77,6 +80,7 @@ const MAX_MEDIA_BYTES = 700 * 1024;
  *     recordOptOut: (input: {phone: string, source: string}) => Promise<boolean>,
  *     replyText: string
  *   },
+ *   onCustomerText?: (input: {phone: string, text: string, optedOut: boolean}) => Promise<{campaignId: string, campaignName: string} | null>,
  *   log?: {info: (...args: unknown[]) => void, error: (...args: unknown[]) => void}
  * }} deps
  *   acceptedMediaTypes: media types this bot accepts, from 'image', 'audio', 'video',
@@ -91,7 +95,7 @@ const MAX_MEDIA_BYTES = 700 * 1024;
 function createConversationEngine(deps) {
   const { storage, whatsapp, ai, deduplicator, isWithinSendWindow, now, unsupportedReplyText, systemPrompt, tool } = deps;
   const { acceptedMediaTypes = [], mediaReceivedReplyText, mediaRejectedReplyText, mediaTypeLabels = {} } = deps;
-  const { onHandoff, testMode, optOut, log = console } = deps;
+  const { onHandoff, testMode, optOut, onCustomerText, log = console } = deps;
   if (optOut && (typeof optOut.isOptOutText !== 'function' || typeof optOut.recordOptOut !== 'function' || typeof optOut.replyText !== 'string' || optOut.replyText.trim() === '')) {
     throw new TypeError('optOut needs isOptOutText, recordOptOut and replyText');
   }
@@ -244,7 +248,17 @@ function createConversationEngine(deps) {
       const isAccepted = message.kind !== 'text' && message.media && accepted.has(message.mediaType);
       if (isAccepted) await storeMedia(conversationId, seq, message.media);
 
-      if (optOut && message.kind === 'text' && optOut.isOptOutText(message.text)) {
+      const isOptOut = Boolean(optOut && message.kind === 'text' && optOut.isOptOutText(message.text));
+      if (typeof onCustomerText === 'function' && message.kind === 'text') {
+        try {
+          const source = await onCustomerText({ phone: message.from, text: message.text, optedOut: isOptOut });
+          if (source) await updateConversation(conversationId, (current) => ({ ...current, campaignId: source.campaignId, campaignName: source.campaignName }));
+        } catch (err) {
+          log.error(`conversation: onCustomerText failed: ${err && err.name}`);
+        }
+      }
+
+      if (isOptOut) {
         const added = await optOut.recordOptOut({ phone: message.from, source: 'keyword' });
         await updateConversation(conversationId, (current) => ({ ...current, optedOut: true, optedOutAt: receivedAt.toISOString() }));
         if (added && isWithinSendWindow(receivedAt)) await send(conversationId, message.from, optOut.replyText);
