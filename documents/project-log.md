@@ -215,3 +215,17 @@ Dedi, 2026-10-28: every bot can send a customer a signup link by hand, or send a
 
 - Rollback point: main f2d8e5d (tag v1.0.0). Bots pinned to v1.0.0 are not affected.
 - Before a bot uses it live: Meta-approved signup and marketing templates (with a "לא מעוניין" quick reply), scheduler job `send-campaigns` every 10 minutes, webhook fields `phone_number_quality_update`, `message_template_status_update`, `message_template_quality_update` subscribed in the Meta app.
+
+### Release 1.1.0 run on main (release procedure, test-plan.md)
+
+PR #16 merged 2026-10-28 (merge 4ebc3f1). The reply tracking (cfcb9a7, 0f573b4) was pushed after that merge and went in through PR #17 (merge d160823).
+
+| Date (UTC) | Where | Command | Result |
+|---|---|---|---|
+| 2026-10-28 10:59 | GitHub Actions, PR #17 head 0c8ed33 | workflow `test` (emulator) | 293 tests, 293 pass, 0 fail, 0 skipped |
+| 2026-10-28 10:59 | cloud session, Firestore emulator, main d160823 | `node scripts/release-check.js` | T-01 to T-24 all pass; 293 tests, 293 pass, 0 fail, 0 skipped, 0 todo; RELEASE CHECK PASS |
+| 2026-10-28 10:59 | cloud session, Firestore emulator, main d160823 | `node scripts/dry-run.js` (T-09) | 37 checks pass; 30 messages would have been sent; nothing was sent |
+
+- Owner approval: Dedi merged PRs #16 and #17 (2026-10-28).
+- Tag: `v1.1.0` on main after this entry is merged (created by Dedi on the GitHub release page).
+- Rollback point: v1.0.0 (f2d8e5d). Bots pinned to v1.0.0 are not affected.
