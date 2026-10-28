@@ -25,9 +25,19 @@ Every release must pass all tests below before it is tagged. Tests marked TO VER
 - T-16 Security: admin and job tokens are accepted in headers only; a token in the URL is rejected. (B2, F-04, F-05)
 - T-17 Non-text messages: an incoming voice note or image gets a defined reply, not silence. (B5, F-20, TO VERIFY)
 
+## Added 2026-10-28 (base 1.1.0, outbound messages, decisions.md items 46 to 51)
+
+- T-18 Lists: Israeli phone formats become 9725XXXXXXXX; landlines and junk are refused; a CSV (UTF-8 or Hebrew Windows-1255) or pasted list is read with its header skipped and bad lines reported; a phone is added once per campaign. (outbound, admin)
+- T-19 Daily limit: 100 a day in week 1, +50 each week, up to the ceiling; the limit is shared by all campaigns and counts signup links; each job run sends one small batch. (outbound)
+- T-20 Send window: the campaign job sends nothing outside Sunday to Thursday 09:00 to 17:50 or on holidays; a signup link outside the window is refused. (outbound, B8)
+- T-21 Opt-out: an opt-out word or the template's "not interested" button is recorded, confirmed once, does not reach the AI, and the phone gets no campaign or signup message again. (outbound, B7)
+- T-22 Automatic pause: a Meta limit or block error, a quality warning on the number, a paused or red template, or ten failed sends in a row pause the campaign and alert the owner; the recipient is sent after a person resumes. (outbound)
+- T-23 One send per recipient: overlapping job runs, duplicate rows and uploads never send twice to the same phone in a campaign. (outbound)
+- T-24 Recipient status: Meta's delivered, read and failed statuses update the recipient, forward only, with the failure reason. (outbound, B5)
+
 ## Release procedure
 
-1. Run T-01 to T-17. Stop at the first failure.
+1. Run T-01 to T-24. Stop at the first failure.
 2. Record the results in project-log.md: date, version, test IDs run, result, DRY RUN result.
 3. Project owner approves the release.
 4. Tag the version.

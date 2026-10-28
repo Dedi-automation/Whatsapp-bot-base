@@ -276,3 +276,150 @@ test('unknown pages are 404; other methods are 405', async (t) => {
   assert.equal((await s.request('/admin/leads/nobody', { headers: { cookie } })).status, 404);
   assert.equal((await s.request('/admin/leads', { method: 'DELETE', headers: { cookie } })).status, 405);
 });
+
+// ---- base 1.1.0: outbound pages (decisions.md items 46 to 51) ----
+
+const { createOutbound } = require('../src/outbound');
+const { createFakeWhatsAppClient } = require('../src/fakes/whatsapp-fake');
+const { parseMultipart } = require('../src/admin');
+
+async function setupOutbound() {
+  const whatsapp = createFakeWhatsAppClient();
+  const storageRef = createMemoryStorage({ projectId: 'test-admin-outbound' });
+  const outbound = createOutbound({
+    storage: storageRef,
+    whatsapp,
+    isWithinSendWindow: () => true,
+    now: () => NOW,
+    optOutReplyText: 'הוסרת.',
+    signup: { template: { name: 'signup_link', language: 'he', params: ['{name}'] }, link: 'https://example.com/join' },
+    templates: { travel: { name: 'travel_offer', language: 'he', label: `הצעה ${XSS}` } },
+    fallbacks: { name: 'לקוח' },
+    log: { info() {}, error() {} },
+  });
+  const admin = createAdmin({ adminToken: TOKEN, storage: storageRef, statuses: ['new'], outbound, now: () => NOW, secureCookie: false, log: { info() {}, error() {} } });
+  const server = http.createServer((req, res) => admin.handle(req, res));
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const base = `http://127.0.0.1:${server.address().port}`;
+  const request = (path, init = {}) => fetch(base + path, { redirect: 'manual', ...init });
+  return { storage: storageRef, whatsapp, outbound, request, close: () => new Promise((r) => server.close(r)) };
+}
+
+test('outbound page: signup link sent from the dashboard; CSRF required; nav shows the page', async (t) => {
+  const app = await setupOutbound();
+  t.after(app.close);
+  const cookie = await login(app.request);
+  const page = await (await app.request('/admin/outbound', { headers: { cookie } })).text();
+  assert.ok(page.includes('href="/admin/outbound"'));
+  assert.ok(!page.includes('<script'));
+  const noCsrf = await postForm(app.request, '/admin/outbound/signup', cookie, { phone: '0501234567' });
+  assert.equal(noCsrf.status, 403);
+  const csrf = await csrfFrom(app.request, cookie, '/admin/outbound');
+  const res = await postForm(app.request, '/admin/outbound/signup', cookie, { phone: '050-1234567', name: 'דנה', csrf });
+  assert.equal(res.status, 303);
+  assert.equal(res.headers.get('location'), '/admin/outbound?signup=sent');
+  assert.equal(app.whatsapp.sent[0].to, '972501234567');
+  const after = await (await app.request(res.headers.get('location'), { headers: { cookie } })).text();
+  assert.ok(after.includes('הלינק נשלח.'));
+  assert.ok(after.includes('972501234567'));
+});
+
+test('campaign from the dashboard: create, upload a Windows-1255 CSV file, start, pause, status filter', async (t) => {
+  const app = await setupOutbound();
+  t.after(app.close);
+  const cookie = await login(app.request);
+  const csrf = await csrfFrom(app.request, cookie, '/admin/outbound');
+  const created = await postForm(app.request, '/admin/campaigns', cookie, { name: `נוסעים ${XSS}`, templateKey: 'travel', csrf });
+  assert.equal(created.status, 303);
+  const path = created.headers.get('location');
+  const id = decodeURIComponent(path.split('/').pop());
+
+  // "דנה,0501234567" + "x,123" + "0527654321" in Windows-1255, as Hebrew Excel saves CSV.
+  const file = Buffer.concat([Buffer.from([0xe3, 0xf0, 0xe4]), Buffer.from(',0501234567\r\nx,123\r\n0527654321\r\n')]);
+  const form = new FormData();
+  form.append('csrf', csrf);
+  form.append('file', new Blob([file], { type: 'text/csv' }), 'list.csv');
+  form.append('list', '0501234567\n0531112222');
+  const upload = await app.request(`${path}/recipients`, { method: 'POST', headers: { cookie }, body: form });
+  assert.equal(upload.status, 303);
+  assert.match(upload.headers.get('location'), /added=3&dup=1&invalid=1$/);
+  const list = await app.outbound.listRecipients(id);
+  assert.deepEqual(list.map((r) => [r.data.phone, r.data.name]), [['972501234567', 'דנה'], ['972527654321', ''], ['972531112222', '']]);
+
+  const page = await (await app.request(upload.headers.get('location'), { headers: { cookie } })).text();
+  assert.ok(!page.includes('<script'));
+  assert.ok(page.includes('נוספו 3 נמענים'));
+  assert.ok(page.includes('ממתין: 3'));
+
+  const start = await postForm(app.request, `${path}/status`, cookie, { action: 'start', csrf });
+  assert.equal(start.status, 303);
+  assert.equal((await app.outbound.getCampaign(id)).status, 'running');
+  await postForm(app.request, `${path}/status`, cookie, { action: 'pause', csrf });
+  assert.equal((await app.outbound.getCampaign(id)).status, 'paused');
+  const bad = await postForm(app.request, `${path}/status`, cookie, { action: 'pause', csrf });
+  assert.equal(bad.status, 400);
+  assert.ok((await bad.text()).includes('הקמפיין לא רץ'));
+
+  const filtered = await (await app.request(`${path}?status=failed`, { headers: { cookie } })).text();
+  assert.ok(!filtered.includes('972501234567'));
+});
+
+test('upload: a multipart form is accepted only on the upload route, within 2 MB; empty upload is a clear error', async (t) => {
+  const app = await setupOutbound();
+  t.after(app.close);
+  const cookie = await login(app.request);
+  const csrf = await csrfFrom(app.request, cookie, '/admin/outbound');
+  const id = await app.outbound.createCampaign({ name: 'x', templateKey: 'travel' });
+  const empty = new FormData();
+  empty.append('csrf', csrf);
+  const res = await app.request(`/admin/campaigns/${id}/recipients`, { method: 'POST', headers: { cookie }, body: empty });
+  assert.equal(res.status, 400);
+  assert.ok((await res.text()).includes('לא נבחר קובץ'));
+  const elsewhere = new FormData();
+  elsewhere.append('csrf', csrf);
+  elsewhere.append('phone', '0501234567');
+  assert.equal((await app.request('/admin/outbound/signup', { method: 'POST', headers: { cookie }, body: elsewhere })).status, 415);
+  const big = new FormData();
+  big.append('csrf', csrf);
+  big.append('list', 'x'.repeat(2 * 1024 * 1024 + 10));
+  assert.equal((await app.request(`/admin/campaigns/${id}/recipients`, { method: 'POST', headers: { cookie }, body: big })).status, 413);
+});
+
+test('daily limit and opt-out list on the dashboard', async (t) => {
+  const app = await setupOutbound();
+  t.after(app.close);
+  const cookie = await login(app.request);
+  const csrf = await csrfFrom(app.request, cookie, '/admin/outbound');
+  const saved = await postForm(app.request, '/admin/outbound/ramp', cookie, { startPerDay: '80', stepPerWeek: '40', maxPerDay: '', csrf });
+  assert.equal(saved.status, 303);
+  assert.deepEqual((await app.outbound.getRamp()).maxPerDay, null);
+  const wrong = await postForm(app.request, '/admin/outbound/ramp', cookie, { startPerDay: 'abc', stepPerWeek: '40', maxPerDay: '', csrf });
+  assert.equal(wrong.status, 400);
+  const add = await postForm(app.request, '/admin/optouts', cookie, { phone: '0501234567', csrf });
+  assert.equal(add.status, 303);
+  assert.equal(await app.outbound.isOptedOut('972501234567'), true);
+  const page = await (await app.request('/admin/optouts', { headers: { cookie } })).text();
+  assert.ok(page.includes('972501234567') && page.includes('נוסף בלוח'));
+});
+
+test('parseMultipart: fields as text, files as bytes, a field named _files is ignored', () => {
+  const b = 'XyZ';
+  const body = Buffer.from(
+    `--${b}\r\nContent-Disposition: form-data; name="csrf"\r\n\r\nabc\r\n` +
+      `--${b}\r\nContent-Disposition: form-data; name="_files"\r\n\r\nevil\r\n` +
+      `--${b}\r\nContent-Disposition: form-data; name="file"; filename="a.csv"\r\nContent-Type: text/csv\r\n\r\n050,1\r\n\r\n` +
+      `--${b}--\r\n`
+  );
+  const { fields, files } = parseMultipart(body, b);
+  assert.deepEqual(fields, { csrf: 'abc' });
+  assert.equal(files.file.toString(), '050,1\r\n');
+});
+
+test('without an outbound module the outbound routes do not exist', async (t) => {
+  const app = await setup();
+  t.after(app.close);
+  const cookie = await login(app.request);
+  assert.equal((await app.request('/admin/outbound', { headers: { cookie } })).status, 404);
+  const page = await (await app.request('/admin/leads', { headers: { cookie } })).text();
+  assert.ok(!page.includes('/admin/outbound'));
+});

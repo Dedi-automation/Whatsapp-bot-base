@@ -41,6 +41,10 @@ function createFakeWhatsAppClient() {
       // Fake returns whatever the test puts in payload.messages, unchanged.
       return Array.isArray(payload && payload.messages) ? payload.messages : [];
     },
+    parseEvents(payload) {
+      // Same idea: whatever the test puts in payload.events.
+      return Array.isArray(payload && payload.events) ? payload.events : [];
+    },
   };
 }
 

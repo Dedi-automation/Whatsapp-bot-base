@@ -1,6 +1,7 @@
 'use strict';
 
-// Release procedure step 1 (test-plan.md): run the whole suite and report T-01 to T-17.
+// Release procedure step 1 (test-plan.md): run the whole suite and report T-01 to T-24
+// (T-18 to T-24 since base 1.1.0, outbound messages).
 // Each test ID counts the top-level tests whose name contains it. A test ID with no
 // test, a failure, or a skipped test makes the check fail. T-15 (version pin) runs
 // against a temporary tagged copy of the base, so it needs no real tag.
@@ -27,7 +28,8 @@ const total = (name) => Number((lines.find((l) => l.startsWith(`# ${name} `)) ||
 let pass = run.status === 0;
 console.log('| Test | Tests | Failed | Skipped | Result |');
 console.log('|---|---|---|---|---|');
-for (let i = 1; i <= 17; i += 1) {
+const LAST_TEST_ID = 24;
+for (let i = 1; i <= LAST_TEST_ID; i += 1) {
   const id = `T-${String(i).padStart(2, '0')}`;
   const mine = tests.filter((t) => t.name.includes(id));
   const failed = mine.filter((t) => !t.ok).length;

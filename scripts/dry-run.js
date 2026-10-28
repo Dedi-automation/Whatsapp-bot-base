@@ -5,7 +5,8 @@
 //
 // Real modules end to end: config, HTTP server, signature check, WhatsApp client,
 // conversation engine, AI client, send window, storage, test mode, email client,
-// admin dashboard, scheduled job lock, health check. Only the network is replaced:
+// admin dashboard, scheduled job lock, health check, outbound messages (base 1.1.0:
+// signup link, campaign upload, ramped job, opt-out, Meta statuses and quality pause). Only the network is replaced:
 // every outgoing HTTP call (WhatsApp, Anthropic, SendGrid) goes to a recording fetch.
 //
 // Storage: Firestore on the emulator when FIRESTORE_EMULATOR_HOST is set (a fresh
@@ -69,7 +70,9 @@ async function runDryRun(options = {}) {
     }
     const body = JSON.parse(init.body);
     outId += 1;
-    wouldSend.push({ channel: 'whatsapp', to: body.to, text: body.text ? body.text.body : body.type });
+    const template = body.type === 'template' ? body.template : null;
+    const params = template && template.components ? template.components.flatMap((c) => c.parameters.map((p) => p.text)) : [];
+    wouldSend.push({ channel: 'whatsapp', to: body.to, text: body.text ? body.text.body : template ? `template ${template.name} [${params.join(' | ')}]` : body.type });
     return { ok: true, status: 200, json: async () => ({ messages: [{ id: `dry-out-${outId}` }] }) };
   };
 
@@ -126,6 +129,13 @@ async function runDryRun(options = {}) {
       endKeyword: 'סיום בדיקה',
       questions: ['מה היה טוב?', 'מה היה חסר?', 'מה לשנות בניסוח?', 'עוד משהו?'],
       closingText: 'תודה! ההערות נשמרו.',
+    },
+    outbound: {
+      optOutReplyText: 'הוסרת מרשימת התפוצה. לא נשלח לך עוד הודעות כאלה.',
+      signup: { template: { name: 'signup_link', language: 'he', params: ['{name}'], urlButtonParam: '{link}' }, link: 'https://bot.example.com/join' },
+      templates: { travel: { name: 'travel_offer', language: 'he', params: ['{name}'], label: 'הצעת ביטוח נסיעות' } },
+      fallbacks: { name: 'לקוח יקר' },
+      batchPerRun: 2,
     },
     jobs: {
       'send-reminders': async () => {
@@ -283,6 +293,64 @@ async function runDryRun(options = {}) {
     mark = wouldSend.length;
     const health = await checkHealth({ storage, whatsapp, ai, config: bot.config, now });
     check('health check passes and sends its result message', health.ok && sentSince(mark).length === 1 && sentSince(mark)[0].to === OWNER_PHONE);
+
+    // 14. Outbound (base 1.1.0): signup link, campaign upload, ramped job, opt-out, Meta events
+    const post = (path, fields) => fetch(`${base}${path}`, { method: 'POST', redirect: 'manual', headers: { cookie, 'Content-Type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ ...fields, csrf }).toString() });
+    const deliverRaw = async (payload) => {
+      const raw = Buffer.from(JSON.stringify(payload));
+      const sig = 'sha256=' + crypto.createHmac('sha256', env.WHATSAPP_APP_SECRET).update(raw).digest('hex');
+      return (await fetch(`${base}/whatsapp-webhook`, { method: 'POST', body: raw, headers: { 'X-Hub-Signature-256': sig } })).json();
+    };
+    const runCampaigns = () => fetch(`${base}/jobs/send-campaigns`, { method: 'POST', headers: { Authorization: `Bearer ${env.SCHEDULED_JOB_TOKEN}` } }).then((r) => r.json());
+
+    mark = wouldSend.length;
+    const signupRes = await post('/admin/outbound/signup', { phone: '052-000-0011', name: 'רונית' });
+    const signupMsg = sentSince(mark)[0];
+    check('signup link from the dashboard: one template to the customer with the name and link', signupRes.headers.get('location') === '/admin/outbound?signup=sent' && sentSince(mark).length === 1 && signupMsg.to === '972520000011' && signupMsg.text === 'template signup_link [רונית | https://bot.example.com/join]');
+
+    const created = await post('/admin/campaigns', { name: 'לקוחות קיימים', templateKey: 'travel' });
+    const campaignPath = created.headers.get('location');
+    const campaignId = decodeURIComponent(campaignPath.split('/').pop());
+    const upload = new FormData();
+    upload.append('csrf', csrf);
+    upload.append('file', new Blob(['שם,טלפון\nדנה,050-0000021\nיוסי,0500000022\nכפול,0500000021\nשגוי,123\n,0500000023\nמיכל,0500000024\n'], { type: 'text/csv' }), 'customers.csv');
+    const uploaded = await fetch(`${base}${campaignPath}/recipients`, { method: 'POST', redirect: 'manual', headers: { cookie }, body: upload });
+    check('campaign list upload: 4 added, the duplicate and the bad line reported', /added=4&dup=1&invalid=1$/.test(uploaded.headers.get('location') || ''));
+
+    mark = wouldSend.length;
+    const optOut = await deliver('972500000022', { type: 'button', button: { text: 'לא מעוניין' } });
+    check('T-21 quick-reply "לא מעוניין": recorded as opt-out, confirmed once, AI not called', optOut.results[0] === 'opted_out' && sentSince(mark).length === 1 && sentSince(mark)[0].text.startsWith('הוסרת'));
+
+    await post(`${campaignPath}/status`, { action: 'start' });
+    mark = wouldSend.length;
+    const run1 = await runCampaigns();
+    const run2 = await runCampaigns();
+    const campaignSent = sentSince(mark).filter((m) => m.text.startsWith('template travel_offer'));
+    const recipients = await bot.outbound.listRecipients(campaignId);
+    check('campaign job: batches of 2, opted-out customer skipped, fallback name used', run1.result.sent === 2 && run2.result.sent === 1 && campaignSent.length === 3 && !campaignSent.some((m) => m.to === '972500000022') && campaignSent.some((m) => m.text.includes('לקוח יקר')));
+    check('T-19 day count: signup link + 3 campaign messages, week 1 limit 100', run2.result.sentToday === 4 && run2.result.quota === 100);
+    check('campaign done and the owner is told by email', (await bot.outbound.getCampaign(campaignId)).status === 'done' && sentSince(mark).some((m) => m.channel === 'email' && m.text.includes('קמפיין הסתיים')));
+
+    await deliverRaw({ entry: [{ changes: [{ field: 'messages', value: { statuses: [{ id: recipients[0].data.messageId, status: 'delivered', recipient_id: recipients[0].data.phone }, { id: recipients[2].data.messageId, status: 'failed', recipient_id: recipients[2].data.phone, errors: [{ code: 131026, title: 'Message undeliverable' }] }] } }] }] });
+    const afterStatus = await bot.outbound.listRecipients(campaignId);
+    check('T-24 Meta statuses update recipients (delivered, failed with reason)', afterStatus[0].data.status === 'delivered' && afterStatus[1].data.status === 'opted_out' && afterStatus[2].data.status === 'failed' && /131026/.test(afterStatus[2].data.error));
+
+    const secondCampaign = await bot.outbound.createCampaign({ name: 'שני', templateKey: 'travel' });
+    await bot.outbound.addRecipients(secondCampaign, [{ phone: '0500000031' }, { phone: '0500000032' }]);
+    await bot.outbound.setStatus(secondCampaign, 'start');
+    mark = wouldSend.length;
+    await deliverRaw({ entry: [{ changes: [{ field: 'phone_number_quality_update', value: { display_phone_number: '972500000000', event: 'FLAGGED', current_limit: 'TIER_250' } }] }] });
+    const pausedRun = await runCampaigns();
+    check('T-22 Meta quality warning pauses the running campaign, alerts the owner, nothing sent', (await bot.outbound.getCampaign(secondCampaign)).status === 'paused_auto' && pausedRun.result.sent === 0 && sentSince(mark).length === 1 && sentSince(mark)[0].channel === 'email');
+
+    await bot.outbound.setStatus(secondCampaign, 'start');
+    clock = new Date('2026-10-30T10:00:00Z');
+    mark = wouldSend.length;
+    const friday = await runCampaigns();
+    check('T-20 campaign job on Friday: outside the window, nothing sent', friday.result.status === 'outside_window' && sentSince(mark).length === 0);
+    clock = new Date('2026-10-26T11:00:00Z');
+    const campaignPage = await (await fetch(`${base}${campaignPath}`, { headers: { cookie } })).text();
+    check('campaign page shows the status of each recipient', campaignPage.includes('נמסר: 1') && campaignPage.includes('הוסר לפי בקשה: 1') && campaignPage.includes('נכשל: 1'));
 
     check('no AI request was left unanswered', aiQueue.length === 0);
   } finally {

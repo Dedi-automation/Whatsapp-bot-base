@@ -16,6 +16,10 @@
 // - Shows: leads (conversations) with a status filter, one lead with its transcript
 //   and media, status change; test-mode trials with notes, media and prompt
 //   recommendations, which only the owner approves or rejects (decisions.md item 34).
+// - Outbound (base 1.1.0, decisions.md items 46 to 51), when the bot has an outbound
+//   module: send a signup link to one phone, the daily limit and its weekly ramp,
+//   campaigns (create, upload a CSV or pasted list, start, pause, status per
+//   recipient) and the opt-out list. The list upload is the only multipart form.
 // - No billing, commissions or employees (outside the base).
 //
 // The session cookie is stateless: `<expiry>.<signature>`, signed with HMAC-SHA256
@@ -29,9 +33,25 @@ const { html, raw } = require('./html');
 const { checkBearerToken } = require('./security');
 const { headerFor } = require('./schema');
 const { MESSAGES, CONVERSATIONS } = require('./conversation');
+const { OutboundError } = require('./errors');
+const { parseRecipientList, decodeText } = require('./outbound');
 
 const COOKIE = 'admin_session';
 const MAX_FORM_BYTES = 16 * 1024;
+// A list of 5,000 phones and names is about 150 KB; a Hebrew CSV with more columns is larger.
+const MAX_UPLOAD_BYTES = 2 * 1024 * 1024;
+const MAX_RECIPIENT_ROWS = 500;
+const UPLOAD_PATH = /^\/admin\/campaigns\/[^/]+\/recipients$/;
+
+const CAMPAIGN_STATUS = { draft: 'טיוטה', running: 'פועל', paused: 'מושהה', paused_auto: 'נעצר אוטומטית', done: 'הסתיים' };
+const RECIPIENT_STATUS = { pending: 'ממתין', sent: 'נשלח', delivered: 'נמסר', read: 'נקרא', failed: 'נכשל', opted_out: 'הוסר לפי בקשה' };
+const SIGNUP_RESULT = {
+  sent: 'הלינק נשלח.',
+  invalid_phone: 'מספר הטלפון לא תקין.',
+  opted_out: 'הלקוח ביקש לא לקבל הודעות. לא נשלח.',
+  outside_window: 'מחוץ לשעות השליחה ללקוחות (ראשון עד חמישי, 09:00 עד 17:50). לא נשלח.',
+  failed: 'השליחה נכשלה. פרטים ברשימת השליחות.',
+};
 const MIN_TOKEN_LENGTH = 16;
 const DEFAULT_SESSION_HOURS = 12;
 const SESSIONS = 'test_sessions';
@@ -67,6 +87,7 @@ const SECURITY_HEADERS = {
  *   storage: import('./storage').Storage,
  *   statuses: string[],
  *   testMode?: {decideRecommendation: (input: {id: string, decision: 'approved' | 'rejected', decidedBy: string}) => Promise<unknown>},
+ *   outbound?: ReturnType<typeof import('./outbound').createOutbound>,
  *   schema?: import('./schema').Schema,
  *   leadsTab?: string,
  *   leadFields?: string[],
@@ -85,7 +106,7 @@ const SECURITY_HEADERS = {
  * Errors: TypeError at startup when the token is shorter than 16 characters or statuses is empty.
  */
 function createAdmin(deps) {
-  const { adminToken, storage, statuses, testMode, schema, leadsTab = CONVERSATIONS } = deps || {};
+  const { adminToken, storage, statuses, testMode, outbound, schema, leadsTab = CONVERSATIONS } = deps || {};
   const { botName = '', now = () => new Date(), sessionHours = DEFAULT_SESSION_HOURS, secureCookie = true, log = console } = deps || {};
   if (typeof adminToken !== 'string' || adminToken.length < MIN_TOKEN_LENGTH) {
     throw new TypeError(`ADMIN_TOKEN must be at least ${MIN_TOKEN_LENGTH} characters`);
@@ -152,15 +173,20 @@ function createAdmin(deps) {
     if (req.method === 'POST') {
       let form;
       try {
-        form = await readForm(req);
+        form = await readForm(req, UPLOAD_PATH.test(path) ? { maxBytes: MAX_UPLOAD_BYTES, multipart: true } : {});
       } catch (err) {
-        return page(res, err.statusCode || 400, 'שגיאה', html`<p>הבקשה לא תקינה.</p>`);
+        return page(res, err.statusCode || 400, 'שגיאה', html`<p>${err.statusCode === 413 ? 'הקובץ גדול מדי.' : 'הבקשה לא תקינה.'}</p>`);
       }
       // Cookie sessions need the CSRF field; a Bearer client is not a browser.
       if (!bearer && !safeEqual(String(form.csrf || ''), csrfFor(session))) {
         return page(res, 403, 'שגיאה', html`<p>הטופס פג תוקף. רעננו את הדף ונסו שוב.</p>`);
       }
-      return post(req, res, path, form, session);
+      try {
+        return await post(req, res, path, form, session);
+      } catch (err) {
+        if (!(err instanceof OutboundError)) throw err;
+        return page(res, 400, 'שגיאה', html`<p>${err.message}</p><p><a href="/admin/outbound">חזרה</a></p>`, csrfFor(session || ''));
+      }
     }
     if (req.method !== 'GET') return methodNotAllowed(res);
     return get(res, path, url, session);
@@ -176,6 +202,11 @@ function createAdmin(deps) {
     if ((m = /^\/admin\/trials\/([^/]+)$/.exec(path))) return trialPage(res, decodeId(m[1]), csrf);
     if ((m = /^\/admin\/recommendations\/([^/]+)$/.exec(path))) return recommendationPage(res, decodeId(m[1]), csrf);
     if ((m = /^\/admin\/media\/([^/]+)$/.exec(path))) return mediaFile(res, decodeId(m[1]));
+    if (outbound) {
+      if (path === '/admin/outbound') return outboundPage(res, url, csrf);
+      if (path === '/admin/optouts') return optOutsPage(res, url, csrf);
+      if ((m = /^\/admin\/campaigns\/([^/]+)$/.exec(path))) return campaignPage(res, decodeId(m[1]), url, csrf);
+    }
     return notFound(res);
   }
 
@@ -187,6 +218,14 @@ function createAdmin(deps) {
     let m;
     if ((m = /^\/admin\/leads\/([^/]+)\/status$/.exec(path))) return changeStatus(res, decodeId(m[1]), form);
     if ((m = /^\/admin\/recommendations\/([^/]+)\/decision$/.exec(path))) return decide(res, decodeId(m[1]), form);
+    if (outbound) {
+      if (path === '/admin/outbound/signup') return sendSignup(res, form);
+      if (path === '/admin/outbound/ramp') return saveRamp(res, form);
+      if (path === '/admin/optouts') return addOptOut(res, form);
+      if (path === '/admin/campaigns') return newCampaign(res, form);
+      if ((m = /^\/admin\/campaigns\/([^/]+)\/recipients$/.exec(path))) return uploadRecipients(res, decodeId(m[1]), form);
+      if ((m = /^\/admin\/campaigns\/([^/]+)\/status$/.exec(path))) return campaignStatus(res, decodeId(m[1]), form);
+    }
     return notFound(res);
   }
 
@@ -381,6 +420,160 @@ function createAdmin(deps) {
     return redirect(res, `/admin/recommendations/${encodeURIComponent(id)}`);
   }
 
+  // ---- outbound: signup links, daily limit, campaigns, opt-outs ----
+
+  async function outboundPage(res, url, csrf) {
+    const day = await outbound.todayStatus();
+    const campaigns = await outbound.listCampaigns();
+    const signups = (await outbound.listSignups()).slice(0, 20);
+    const result = SIGNUP_RESULT[url.searchParams.get('signup')] || '';
+    const saved = url.searchParams.get('saved') === 'ramp' ? 'ההגדרות נשמרו.' : '';
+    const templateOptions = Object.entries(outbound.templates).map(([key, def]) => html`<option value="${key}">${def.label || def.name}</option>`);
+    const rows = campaigns.map(
+      (c) => html`<tr><td><a href="/admin/campaigns/${encodeURIComponent(c.id)}">${c.data.name}</a></td><td>${CAMPAIGN_STATUS[c.data.status] || c.data.status}</td><td>${c.data.total}</td><td>${c.data.sent}</td><td>${c.data.failed}</td><td>${c.data.skipped}</td></tr>`
+    );
+    const r = day.ramp;
+    return page(
+      res,
+      200,
+      'הודעות יזומות',
+      html`${result ? html`<p class="notice">${result}</p>` : ''}${saved ? html`<p class="notice">${saved}</p>` : ''}
+<h2>היום</h2>
+<p>שבוע ${day.week} · מכסה היום: ${day.quota} · נשלחו היום: ${day.sent} · ${day.inWindow ? 'בתוך שעות השליחה' : 'מחוץ לשעות השליחה (ראשון עד חמישי, 09:00 עד 17:50)'}</p>
+${outbound.hasSignup
+  ? html`<h2>שליחת לינק הרשמה ללקוח</h2>
+<form method="post" action="/admin/outbound/signup">
+  <input type="hidden" name="csrf" value="${csrf}">
+  <label>טלפון <input name="phone" inputmode="tel" required></label>
+  <label>שם (לא חובה) <input name="name"></label>
+  <button type="submit">שליחה</button>
+</form>
+<table><thead><tr><th>טלפון</th><th>שם</th><th>מצב</th><th>זמן</th></tr></thead><tbody>${signups.map((s) => html`<tr><td>${s.data.phone}</td><td>${s.data.name}</td><td>${RECIPIENT_STATUS[s.data.status] || s.data.status}${s.data.error ? html` <small>${s.data.error}</small>` : ''}</td><td>${s.data.at}</td></tr>`)}</tbody></table>`
+  : ''}
+<h2>קמפיינים</h2>
+<table><thead><tr><th>שם</th><th>מצב</th><th>נמענים</th><th>נשלחו</th><th>נכשלו</th><th>הוסרו</th></tr></thead><tbody>${rows}</tbody></table>
+${templateOptions.length > 0
+  ? html`<form method="post" action="/admin/campaigns">
+  <input type="hidden" name="csrf" value="${csrf}">
+  <label>קמפיין חדש <input name="name" required></label>
+  <label>תבנית <select name="templateKey">${templateOptions}</select></label>
+  <button type="submit">יצירה</button>
+</form>`
+  : html`<p>לבוט הזה לא הוגדרו תבניות קמפיין.</p>`}
+<h2>מכסה יומית למספר</h2>
+<p>משותפת לכל הקמפיינים. השבוע הראשון מתחיל ביום שבו הקמפיין הראשון הופעל${r.startDate ? html` (${r.startDate})` : ''}.</p>
+<form method="post" action="/admin/outbound/ramp">
+  <input type="hidden" name="csrf" value="${csrf}">
+  <label>ביום בשבוע הראשון <input name="startPerDay" inputmode="numeric" value="${r.startPerDay}" required></label>
+  <label>תוספת כל שבוע <input name="stepPerWeek" inputmode="numeric" value="${r.stepPerWeek}" required></label>
+  <label>תקרה ביום (ריק = בלי תקרה) <input name="maxPerDay" inputmode="numeric" value="${r.maxPerDay === null ? '' : r.maxPerDay}"></label>
+  <button type="submit">שמירה</button>
+</form>
+<p><a href="/admin/optouts">רשימת המוסרים</a></p>`,
+      csrf
+    );
+  }
+
+  async function sendSignup(res, form) {
+    const result = await outbound.sendSignupLink({ phone: String(form.phone || ''), name: String(form.name || '') });
+    return redirect(res, `/admin/outbound?signup=${result.status}`);
+  }
+
+  async function saveRamp(res, form) {
+    await outbound.updateRamp({ startPerDay: String(form.startPerDay ?? ''), stepPerWeek: String(form.stepPerWeek ?? ''), maxPerDay: String(form.maxPerDay ?? '').trim() });
+    return redirect(res, '/admin/outbound?saved=ramp');
+  }
+
+  async function newCampaign(res, form) {
+    const id = await outbound.createCampaign({ name: String(form.name || ''), templateKey: String(form.templateKey || '') });
+    return redirect(res, `/admin/campaigns/${encodeURIComponent(id)}`);
+  }
+
+  async function campaignPage(res, id, url, csrf) {
+    const campaign = await outbound.getCampaign(id);
+    if (!campaign) return notFound(res);
+    const all = await outbound.listRecipients(id);
+    const counts = {};
+    for (const r of all) counts[r.data.status] = (counts[r.data.status] || 0) + 1;
+    const filter = (url.searchParams.get('status') || '').trim();
+    const shown = all.filter((r) => !filter || r.data.status === filter);
+    const added = url.searchParams.get('added');
+    const day = await outbound.todayStatus();
+    const template = outbound.templates[campaign.templateKey];
+    const action = campaign.status === 'running'
+      ? html`<button type="submit" name="action" value="pause">עצירה</button>`
+      : campaign.status !== 'done'
+        ? html`<button type="submit" name="action" value="start">${campaign.status === 'draft' ? 'הפעלה' : 'המשך שליחה'}</button>`
+        : '';
+    return page(
+      res,
+      200,
+      `קמפיין ${campaign.name}`,
+      html`<p><a href="/admin/outbound">חזרה להודעות יזומות</a></p>
+${added !== null ? html`<p class="notice">נוספו ${added} נמענים. כפולים: ${url.searchParams.get('dup') || 0}. שורות לא תקינות: ${url.searchParams.get('invalid') || 0}.</p>` : ''}
+<p>מצב: <strong>${CAMPAIGN_STATUS[campaign.status] || campaign.status}</strong>${campaign.pauseReason ? html` · ${campaign.pauseReason}` : ''}</p>
+<p>תבנית: ${template ? template.label || template.name : campaign.templateKey} · נמענים: ${campaign.total} · מכסה היום למספר: ${day.quota}, נשלחו היום: ${day.sent}</p>
+<p>${Object.entries(RECIPIENT_STATUS).map(([key, label]) => html`<a href="/admin/campaigns/${encodeURIComponent(id)}?status=${key}">${label}: ${counts[key] || 0}</a> · `)}<a href="/admin/campaigns/${encodeURIComponent(id)}">הכול</a></p>
+${action ? html`<form method="post" action="/admin/campaigns/${encodeURIComponent(id)}/status"><input type="hidden" name="csrf" value="${csrf}">${action}</form>` : ''}
+<h2>הוספת נמענים</h2>
+<p>קובץ CSV (בשמירה מאקסל: "CSV") או הדבקה, שורה לכל לקוח: טלפון ושם, מופרדים בפסיק. מספר שמופיע כבר בקמפיין לא יתווסף שוב.</p>
+<form method="post" action="/admin/campaigns/${encodeURIComponent(id)}/recipients" enctype="multipart/form-data">
+  <input type="hidden" name="csrf" value="${csrf}">
+  <label>קובץ <input type="file" name="file" accept=".csv,.txt,text/csv,text/plain"></label>
+  <label>או הדבקה <textarea name="list" rows="6" cols="40"></textarea></label>
+  <button type="submit">הוספה</button>
+</form>
+<h2>נמענים${filter ? html` (${RECIPIENT_STATUS[filter] || filter})` : ''}</h2>
+${shown.length > MAX_RECIPIENT_ROWS ? html`<p>מוצגים ${MAX_RECIPIENT_ROWS} הראשונים מתוך ${shown.length}.</p>` : ''}
+<table><thead><tr><th>#</th><th>טלפון</th><th>שם</th><th>מצב</th><th>נשלח</th><th>שגיאה</th></tr></thead><tbody>${shown
+        .slice(0, MAX_RECIPIENT_ROWS)
+        .map((r) => html`<tr><td>${r.data.index + 1}</td><td>${r.data.phone}</td><td>${r.data.name}</td><td>${RECIPIENT_STATUS[r.data.status] || r.data.status}</td><td>${r.data.sentAt}</td><td>${r.data.error}</td></tr>`)}</tbody></table>`,
+      csrf
+    );
+  }
+
+  async function uploadRecipients(res, id, form) {
+    const parts = [];
+    const files = form._files;
+    if (files && Buffer.isBuffer(files.file) && files.file.length > 0) parts.push(decodeText(files.file));
+    if (typeof form.list === 'string' && form.list.trim() !== '') parts.push(form.list);
+    if (parts.length === 0) throw new OutboundError('לא נבחר קובץ ולא הודבקה רשימה');
+    const { rows, invalid } = parseRecipientList(parts.join('\n'));
+    const result = await outbound.addRecipients(id, rows);
+    const q = new URLSearchParams({ added: String(result.added), dup: String(result.duplicates), invalid: String(invalid.length + result.invalid) });
+    return redirect(res, `/admin/campaigns/${encodeURIComponent(id)}?${q}`);
+  }
+
+  async function campaignStatus(res, id, form) {
+    await outbound.setStatus(id, String(form.action || ''));
+    return redirect(res, `/admin/campaigns/${encodeURIComponent(id)}`);
+  }
+
+  async function optOutsPage(res, url, csrf) {
+    const list = await outbound.listOptOuts();
+    return page(
+      res,
+      200,
+      'רשימת המוסרים',
+      html`<p><a href="/admin/outbound">חזרה להודעות יזומות</a></p>
+${url.searchParams.get('added') === '1' ? html`<p class="notice">המספר נוסף לרשימה.</p>` : ''}
+<p>מספרים ברשימה לא יקבלו קמפיין או לינק הרשמה מהבוט. אי אפשר להוציא מספר מהרשימה בלוח.</p>
+<form method="post" action="/admin/optouts">
+  <input type="hidden" name="csrf" value="${csrf}">
+  <label>הוספת מספר <input name="phone" inputmode="tel" required></label>
+  <button type="submit">הוספה</button>
+</form>
+<p>${list.length} מספרים</p>
+<table><thead><tr><th>טלפון</th><th>מקור</th><th>זמן</th></tr></thead><tbody>${list.map((o) => html`<tr><td>${o.id}</td><td>${o.data.source === 'keyword' ? 'הלקוח ביקש' : 'נוסף בלוח'}</td><td>${o.data.at}</td></tr>`)}</tbody></table>`,
+      csrf
+    );
+  }
+
+  async function addOptOut(res, form) {
+    await outbound.recordOptOut({ phone: String(form.phone || ''), source: 'admin' });
+    return redirect(res, '/admin/optouts?added=1');
+  }
+
   // ---- media ----
 
   function mediaLink(id, type) {
@@ -419,7 +612,7 @@ function createAdmin(deps) {
 
   function page(res, status, title, body, csrf) {
     const nav = csrf
-      ? html`<nav><a href="/admin/leads">לידים</a> · <a href="/admin/trials">מצב בדיקה</a>
+      ? html`<nav><a href="/admin/leads">לידים</a> · <a href="/admin/trials">מצב בדיקה</a>${outbound ? html` · <a href="/admin/outbound">הודעות יזומות</a>` : ''}
   <form method="post" action="/admin/logout" class="inline"><input type="hidden" name="csrf" value="${csrf}"><button type="submit">יציאה</button></form></nav>`
       : '';
     const doc = html`<!doctype html>
@@ -514,10 +707,13 @@ function readCookie(header, name) {
   return null;
 }
 
-function readForm(req) {
+function readForm(req, { maxBytes = MAX_FORM_BYTES, multipart = false } = {}) {
   return new Promise((resolve, reject) => {
-    const type = String(req.headers['content-type'] || '').split(';')[0].trim();
-    if (type !== 'application/x-www-form-urlencoded') {
+    const contentType = String(req.headers['content-type'] || '');
+    const type = contentType.split(';')[0].trim().toLowerCase();
+    const boundary = (/boundary=(?:"([^"]+)"|([^;\s]+))/i.exec(contentType) || []).slice(1).find(Boolean);
+    const isMultipart = multipart && type === 'multipart/form-data' && boundary;
+    if (type !== 'application/x-www-form-urlencoded' && !isMultipart) {
       const err = new Error('form expected');
       err.statusCode = 415;
       req.resume();
@@ -528,7 +724,7 @@ function readForm(req) {
     let size = 0;
     req.on('data', (chunk) => {
       size += chunk.length;
-      if (size > MAX_FORM_BYTES) {
+      if (size > maxBytes) {
         const err = new Error('form too large');
         err.statusCode = 413;
         req.removeAllListeners('data');
@@ -538,9 +734,45 @@ function readForm(req) {
       }
       chunks.push(chunk);
     });
-    req.on('end', () => resolve(Object.fromEntries(new URLSearchParams(Buffer.concat(chunks).toString('utf8')))));
+    req.on('end', () => {
+      const body = Buffer.concat(chunks);
+      if (!isMultipart) return resolve(Object.fromEntries(new URLSearchParams(body.toString('utf8'))));
+      const { fields, files } = parseMultipart(body, boundary);
+      return resolve({ ...fields, _files: files });
+    });
     req.on('error', reject);
   });
+}
+
+/**
+ * Fields and files of a multipart/form-data body. Text fields are UTF-8 strings,
+ * files are Buffers (decoded by the caller). Parts without a name are skipped.
+ */
+function parseMultipart(body, boundary) {
+  const fields = {};
+  const files = {};
+  const delimiter = Buffer.from(`--${boundary}`);
+  let pos = body.indexOf(delimiter);
+  while (pos !== -1) {
+    let start = pos + delimiter.length;
+    if (body.subarray(start, start + 2).toString() === '--') break;
+    if (body.subarray(start, start + 2).toString() === '\r\n') start += 2;
+    const next = body.indexOf(delimiter, start);
+    if (next === -1) break;
+    const part = body.subarray(start, Math.max(start, next - 2));
+    const headerEnd = part.indexOf('\r\n\r\n');
+    if (headerEnd !== -1) {
+      const headers = part.subarray(0, headerEnd).toString('utf8');
+      const content = part.subarray(headerEnd + 4);
+      const name = /\bname="([^"]*)"/i.exec(headers);
+      if (name && name[1] !== '_files') {
+        if (/\bfilename="/i.test(headers)) files[name[1]] = Buffer.from(content);
+        else fields[name[1]] = content.toString('utf8');
+      }
+    }
+    pos = next;
+  }
+  return { fields, files };
 }
 
 const STYLE = `
@@ -555,6 +787,8 @@ form.inline { display: inline; }
 .thumb { max-width: 160px; max-height: 160px; }
 pre { white-space: pre-wrap; background: #f5f5f5; padding: 8px; }
 .rec { border: 1px solid #ddd; padding: 8px 12px; margin: 12px 0; }
+.notice { background: #eef6ee; padding: 6px 10px; }
+label { display: inline-block; margin: 4px 8px 4px 0; }
 `;
 
-module.exports = { createAdmin, COOKIE, MIN_TOKEN_LENGTH };
+module.exports = { createAdmin, parseMultipart, COOKIE, MIN_TOKEN_LENGTH };

@@ -27,11 +27,24 @@ const MEDIA_TYPES = new Set(['image', 'audio', 'video', 'document', 'sticker']);
  *
  * @typedef {Object} WhatsAppClient
  * @property {(input: {to: string, text: string}) => Promise<{messageId: string}>} sendText
- * @property {(input: {to: string, templateName: string, language: string, params: string[]}) => Promise<{messageId: string}>} sendTemplate
+ * @property {(input: {to: string, templateName: string, language: string, params: string[], urlButtonParam?: string}) => Promise<{messageId: string}>} sendTemplate
+ *   urlButtonParam: the variable part of the template's first URL button, when it has one.
  * @property {(input: {mediaId: string}) => Promise<{data: Buffer, mimeType: string | null}>} downloadMedia
  *   Two calls: the media ID gives a short-lived URL, then the file is fetched with the token.
  * @property {(payload: unknown) => IncomingMessage[]} parseIncoming
  *   Returns one entry per message in the payload. Status updates produce no entry.
+ * @property {(payload: unknown) => WebhookEvent[]} parseEvents
+ *   Everything in the payload that is not a customer message: delivery statuses of
+ *   messages the bot sent, the number's quality, and template status (base 1.1.0,
+ *   outbound campaigns). The quality and template fields reach the webhook only when
+ *   they are subscribed in the Meta app.
+ *
+ * @typedef {{kind: 'status', messageId: string, status: string, recipient: string | null, errorCode: number | null, errorTitle: string | null}
+ *         | {kind: 'quality', event: string, currentLimit: string | null}
+ *         | {kind: 'template', event: string, templateName: string | null, reason: string | null}} WebhookEvent
+ *   status: 'sent' | 'delivered' | 'read' | 'failed'. quality event: FLAGGED, UNFLAGGED,
+ *   DOWNGRADE, UPGRADE. template event: APPROVED, PAUSED, DISABLED, REJECTED, or the new
+ *   quality score (GREEN, YELLOW, RED) from message_template_quality_update.
  */
 
 /**
@@ -92,11 +105,16 @@ function createWhatsAppClient(options) {
       return post({ to, type: 'text', text: { body: text, preview_url: false } });
     },
 
-    async sendTemplate({ to, templateName, language, params = [] }) {
+    async sendTemplate({ to, templateName, language, params = [], urlButtonParam }) {
       const template = { name: templateName, language: { code: language } };
+      const components = [];
       if (params.length > 0) {
-        template.components = [{ type: 'body', parameters: params.map((value) => ({ type: 'text', text: String(value) })) }];
+        components.push({ type: 'body', parameters: params.map((value) => ({ type: 'text', text: String(value) })) });
       }
+      if (typeof urlButtonParam === 'string' && urlButtonParam !== '') {
+        components.push({ type: 'button', sub_type: 'url', index: '0', parameters: [{ type: 'text', text: urlButtonParam }] });
+      }
+      if (components.length > 0) template.components = components;
       return post({ to, type: 'template', template });
     },
 
@@ -127,7 +145,48 @@ function createWhatsAppClient(options) {
       }
       return result;
     },
+
+    parseEvents(payload) {
+      return parseEvents(payload);
+    },
   };
+}
+
+/** Statuses, quality and template updates from a webhook payload. Unknown shapes are skipped. */
+function parseEvents(payload) {
+  const result = [];
+  const str = (v) => (typeof v === 'string' && v !== '' ? v : null);
+  const entries = payload && Array.isArray(payload.entry) ? payload.entry : [];
+  for (const entry of entries) {
+    const changes = entry && Array.isArray(entry.changes) ? entry.changes : [];
+    for (const change of changes) {
+      const value = (change && change.value) || {};
+      if (Array.isArray(value.statuses)) {
+        for (const s of value.statuses) {
+          if (!s || !str(s.id) || !str(s.status)) continue;
+          const error = Array.isArray(s.errors) && s.errors[0] ? s.errors[0] : null;
+          result.push({
+            kind: 'status',
+            messageId: s.id,
+            status: s.status,
+            recipient: str(s.recipient_id),
+            errorCode: error && Number.isFinite(Number(error.code)) ? Number(error.code) : null,
+            errorTitle: error ? str(error.title) || str(error.message) : null,
+          });
+        }
+      }
+      if (change.field === 'phone_number_quality_update' && str(value.event)) {
+        result.push({ kind: 'quality', event: value.event, currentLimit: str(value.current_limit) });
+      }
+      if (change.field === 'message_template_status_update' && str(value.event)) {
+        result.push({ kind: 'template', event: value.event, templateName: str(value.message_template_name), reason: str(value.reason) });
+      }
+      if (change.field === 'message_template_quality_update' && str(value.new_quality_score)) {
+        result.push({ kind: 'template', event: value.new_quality_score, templateName: str(value.message_template_name), reason: 'quality' });
+      }
+    }
+  }
+  return result;
 }
 
 /**
@@ -168,4 +227,4 @@ function textOf(message) {
   }
 }
 
-module.exports = { createWhatsAppClient, MEDIA_TYPES };
+module.exports = { createWhatsAppClient, parseEvents, MEDIA_TYPES };

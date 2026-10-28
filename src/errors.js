@@ -69,6 +69,14 @@ class EmailError extends Error {
   }
 }
 
+class OutboundError extends Error {
+  /** @param {string} message shown to the person on the dashboard, so it never holds a secret */
+  constructor(message) {
+    super(message);
+    this.name = 'OutboundError';
+  }
+}
+
 module.exports = {
   NotImplementedError,
   ConfigError,
@@ -78,4 +86,5 @@ module.exports = {
   WhatsAppError,
   StorageError,
   EmailError,
+  OutboundError,
 };
