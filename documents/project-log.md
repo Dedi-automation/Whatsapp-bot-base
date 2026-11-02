@@ -235,3 +235,7 @@ PR #16 merged 2026-10-28 (merge 4ebc3f1). The reply tracking (cfcb9a7, 0f573b4) 
 Dedi, 2026-11-02: the same agents buy MyDoctor and custom bots, so billing, the conversation definition and the 30-reply limit are one model for all bots. Decisions 53 to 57. Documents only, no code changed in the base; MyDoctor implements them first (mydoctor-whatsapp-bot, CODEFIX group 8). The shared conversation counter comes into the base with the first agent who has MyDoctor and a custom bot.
 
 - Rollback point: main before this entry.
+
+## 2026-11-02 - decision 53 amended: MyDoctor stays shared - docs/decision-53-mydoctor-shared
+
+Dedi, 2026-11-02: MyDoctor stays one shared service for all its agents; one project per agent applies to custom bots. An agent with both is handled case by case. Documents only. Rollback point: main before this entry.
