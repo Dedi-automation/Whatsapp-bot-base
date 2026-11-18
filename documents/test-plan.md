@@ -35,9 +35,13 @@ Every release must pass all tests below before it is tagged. Tests marked TO VER
 - T-23 One send per recipient: overlapping job runs, duplicate rows and uploads never send twice to the same phone in a campaign. (outbound)
 - T-24 Recipient status: Meta's delivered, read and failed statuses update the recipient, forward only, with the failure reason; a customer's reply marks the recipient "replied" with the text and tags the lead with the campaign. (outbound, B5, B7)
 
+## Added 2026-11-18 (base 1.2.0, reply hours per bot, decisions.md item 58)
+
+- T-25 Reply hours: by default a customer gets no reply outside the send window; with `replyHours: 'always'` the bot answers text, non-text and opt-out at any hour; campaigns keep the send window either way; any other value stops startup. (B1, B7)
+
 ## Release procedure
 
-1. Run T-01 to T-24. Stop at the first failure.
+1. Run T-01 to T-25. Stop at the first failure.
 2. Record the results in project-log.md: date, version, test IDs run, result, DRY RUN result.
 3. Project owner approves the release.
 4. Tag the version.

@@ -14,7 +14,7 @@ Pin an exact tag in the bot's `package.json`:
 ```json
 {
   "dependencies": {
-    "whatsapp-bot-base": "github:Dedi-automation/Whatsapp-bot-base#v1.1.0"
+    "whatsapp-bot-base": "github:Dedi-automation/Whatsapp-bot-base#v1.2.0"
   }
 }
 ```
@@ -24,7 +24,7 @@ by name, which updates both `package.json` and `package-lock.json` (editing
 `package.json` alone keeps the old commit from the lock file):
 
 ```
-npm install whatsapp-bot-base@github:Dedi-automation/Whatsapp-bot-base#v1.1.0
+npm install whatsapp-bot-base@github:Dedi-automation/Whatsapp-bot-base#v1.2.0
 ```
 
 Then run the bot's tests and its DRY RUN, and record the upgrade in the bot's log (T-15). The repository
@@ -38,7 +38,7 @@ const bot = createBot({
   systemPrompt,            // the bot's agent prompt
   tool,                    // the reply tool definition
   unsupportedReplyText,    // reply to a message type the bot does not read
-  // optional: acceptedMediaTypes, leadStatuses, schema, leadFields, testMode,
+  // optional: replyHours ('window' default, or 'always' since 1.2.0), acceptedMediaTypes, leadStatuses, schema, leadFields, testMode,
   // holidays, jobs, monthlyNote, outbound (see the JSDoc in src/index.js)
 });
 bot.listen();
