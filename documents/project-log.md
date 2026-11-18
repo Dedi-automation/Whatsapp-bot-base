@@ -248,3 +248,17 @@ Dedi, 2026-11-18: the campaign lead bot answers 24/7. New `createBot` option `re
 
 - Rollback point: main 3c52f6c (tag v1.1.0 code).
 - After merge: release check + DRY RUN on main, then tag `v1.2.0` (Dedi, GitHub release page).
+
+### Release 1.2.0 run on main (release procedure, test-plan.md)
+
+PR #21 merged 2026-11-18 (merge 4d34f8e).
+
+| Date (Israel) | Where | Command | Result |
+|---|---|---|---|
+| 2026-11-18 22:38 | GitHub Actions, PR #21 head 88ca291 (re-run after Actions billing was fixed) | workflow `test` (emulator) | 299 tests, 299 pass, 0 fail, 0 skipped |
+| 2026-11-18 22:39 | cloud session, Firestore emulator, main 4d34f8e | `node scripts/release-check.js` | T-01 to T-25 all pass; 299 tests, 299 pass, 0 fail, 0 skipped, 0 todo; RELEASE CHECK PASS |
+| 2026-11-18 22:39 | cloud session, Firestore emulator, main 4d34f8e | `node scripts/dry-run.js` (T-09) | T-09 DRY RUN PASS; nothing was sent |
+
+- Owner approval: Dedi merged PR #21 (2026-11-18).
+- Tag: `v1.2.0` on main after this entry is merged (created by Dedi on the GitHub release page).
+- Rollback point: v1.1.0 (6842958). Bots pinned to v1.0.0 or v1.1.0 are not affected.
