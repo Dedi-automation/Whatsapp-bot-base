@@ -50,6 +50,7 @@ const DEFAULT_LEAD_STATUSES = Object.freeze(['new', 'in_progress', 'handoff', 'c
  *   mediaRejectedReplyText?: string,
  *   mediaTypeLabels?: Record<string, string>,
  *   holidays?: Iterable<string>,
+ *   replyHours?: 'window' | 'always',
  *   monthlyNote?: string,
  *   jobs?: Record<string, () => Promise<unknown>>,
  *   botName?: string,
@@ -83,6 +84,10 @@ const DEFAULT_LEAD_STATUSES = Object.freeze(['new', 'in_progress', 'handoff', 'c
  *   leadStatuses: statuses the agent can set on the dashboard (per bot). Default: new,
  *   in_progress, handoff, closed. schema and leadFields: dashboard columns by field ID (F-12).
  *   testMode: tester phones, the end keyword and the 4 to 6 feedback questions (per bot).
+ *   replyHours: when the bot answers customers who write to it. 'window' (default): only
+ *   inside the send window, Sunday to Thursday 09:00 to 17:50, no holidays (decisions.md
+ *   item 17). 'always': at any hour, every day (item 58). Outbound campaigns, signup links
+ *   and test-mode questions always keep the send window.
  *   monthlyNote: one line for the monthly summary, for example "the invoice is sent separately by Grow".
  *   outbound: Meta-approved templates for the signup link and for campaigns, the opt-out
  *   confirmation text, and optionally the opt-out words and the daily limit defaults
@@ -102,6 +107,12 @@ function createBot(options) {
   const log = options.log || console;
   const botName = options.botName || '';
   const inWindow = (when) => isWithinSendWindow(when, { holidays });
+  const replyHours = options.replyHours === undefined ? 'window' : options.replyHours;
+  if (replyHours !== 'window' && replyHours !== 'always') {
+    throw new TypeError(`createBot: replyHours must be 'window' or 'always', got ${JSON.stringify(options.replyHours)}`);
+  }
+  // Customer replies only (item 58); outbound and test mode keep inWindow.
+  const replyWindow = replyHours === 'always' ? () => true : inWindow;
 
   const email = config.email ? options.email || createEmailClient({ apiKey: config.email.apiKey, from: config.email.from }) : null;
   const notifyTo = config.email ? config.email.notifyTo : null;
@@ -187,7 +198,7 @@ function createBot(options) {
     whatsapp,
     ai,
     deduplicator: createDeduplicator({ storage }),
-    isWithinSendWindow: inWindow,
+    isWithinSendWindow: replyWindow,
     now,
     unsupportedReplyText: options.unsupportedReplyText,
     acceptedMediaTypes: options.acceptedMediaTypes,

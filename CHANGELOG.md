@@ -3,6 +3,15 @@
 Bots pin a tag (README.md). Every version passes T-01 to T-17 and the DRY RUN (T-09)
 before it is tagged (documents/test-plan.md). Details per change: documents/project-log.md.
 
+## 1.2.0 - 2026-11-18
+
+Reply hours per bot (decisions.md item 58). Bots on 1.0.0 or 1.1.0 are not affected;
+on 1.2.0 nothing changes unless the bot passes the new option.
+
+- `createBot({ replyHours: 'always' })` answers customers at any hour, every day. The
+  default `'window'` keeps Sunday to Thursday 09:00 to 17:50.
+- Campaigns, signup links and test-mode questions keep the send window. Test T-25.
+
 ## 1.1.0 - 2026-10-28
 
 Outbound messages for every bot (decisions.md items 46 to 51). Bots on 1.0.0 are not

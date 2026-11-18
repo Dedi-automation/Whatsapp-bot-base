@@ -235,3 +235,16 @@ PR #16 merged 2026-10-28 (merge 4ebc3f1). The reply tracking (cfcb9a7, 0f573b4) 
 Dedi, 2026-11-02: the same agents buy MyDoctor and custom bots, so billing, the conversation definition and the 30-reply limit are one model for all bots. Decisions 53 to 57. Documents only, no code changed in the base; MyDoctor implements them first (mydoctor-whatsapp-bot, CODEFIX group 8). The shared conversation counter comes into the base with the first agent who has MyDoctor and a custom bot.
 
 - Rollback point: main before this entry.
+
+## 2026-11-18 - reply hours per bot (base 1.2.0) - feature/reply-hours
+
+Dedi, 2026-11-18: the campaign lead bot answers 24/7. New `createBot` option `replyHours` ('window' default, 'always'), decision 58, test T-25. Only customer replies change; campaigns, signup links and test mode keep the send window. Bots pinned to 1.0.0 or 1.1.0 are not affected.
+
+| Date (Israel) | Where | Command | Result |
+|---|---|---|---|
+| 2026-11-18 22:35 | cloud session, Firestore emulator, main 3c52f6c + new T-25 test only (no code change) | `npm test` | 299 tests: 296 pass, 3 fail (the 3 T-25 'always' cases fail without the change, as expected; all 293 earlier tests pass) |
+| 2026-11-18 22:35 | cloud session, Firestore emulator, feature/reply-hours | `node scripts/release-check.js` | T-01 to T-25 all pass; 299 tests, 299 pass, 0 fail, 0 skipped, 0 todo; RELEASE CHECK PASS |
+| 2026-11-18 22:35 | cloud session, Firestore emulator, feature/reply-hours | `node scripts/dry-run.js` (T-09) | T-09 DRY RUN PASS; nothing was sent |
+
+- Rollback point: main 3c52f6c (tag v1.1.0 code).
+- After merge: release check + DRY RUN on main, then tag `v1.2.0` (Dedi, GitHub release page).

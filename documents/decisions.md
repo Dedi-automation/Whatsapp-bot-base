@@ -80,6 +80,10 @@ Decided 2026-11-02 (Dedi: one billing model for every bot, the same agents buy M
 56. Grow has no API for us, only webhooks, so nothing is charged automatically. The agent buys a pack through a Grow payment link. When 50 conversations remain the agent gets a WhatsApp template with the link and Dedi gets an email; when none remain (no pack bought), the same again. The bot never stops answering because of the pool.
 57. Grow payments: a successful subscription payment (first or monthly) sets the agent's subscription status to active and the next charge date (payment date + 1 month), and emails only Dedi (Grow sends the agent the invoice, item 44). A failed monthly charge sets the status to "payment failed" and emails Dedi at once; the bot keeps working. A paid pack adds 500 conversations for the current month. Payments are identified by Grow product name, the amount only as a fallback; anything else is ignored. Billing code stays per bot (item 8); a shared conversation counter across an agent's bots comes into the base with the first agent who has MyDoctor and a custom bot. Built first in MyDoctor (mydoctor-whatsapp-bot, CODEFIX group 8).
 
+Decided 2026-11-18 (Dedi: answer hours per bot, base 1.2.0):
+
+58. Reply hours are chosen per bot. `replyHours: 'window'` (default, unchanged) answers customers only inside the send window (item 17). `replyHours: 'always'` answers customers at any hour, every day, including the fixed replies (voice note, file, opt-out confirmation). Outbound campaigns, signup links (item 48) and test-mode questions keep the send window in every bot. First user: the campaign lead bot (Dedi's own ad campaign, 24/7 chosen by Dedi 2026-11-18). This replaces "nothing is sent after 17:50" in item 17 for bots that choose 'always'.
+
 ## Proposed, not yet approved
 
 - Source of truth for documents: git. Claude Docs pages are read-only views refreshed from git.
